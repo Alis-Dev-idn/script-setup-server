@@ -1,0 +1,10 @@
+.claude/
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+*.bak
+*.bak.*
+_*.py
+*.tmp
+*.log

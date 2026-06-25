@@ -46,3 +46,38 @@ normalize_path() {
 }
 
 domain_to_slug() { echo "$1" | tr '.' '_'; }
+
+# ---------- Spinner / loading ----------
+# run_with_spinner <pesan> <command...>
+# Jalankan command sambil menampilkan spinner. Output (stdout+stderr) command
+# ditangkap dan ditampilkan ke STDOUT setelah selesai; animasi spinner ditulis ke
+# STDERR. Dengan begitu pemanggil bisa menyembunyikan output (mis. `... >/dev/null`)
+# tanpa mematikan spinner. Mengembalikan exit code asli command.
+run_with_spinner() {
+    local msg="$1"; shift
+    local tmp; tmp="$(mktemp 2>/dev/null || echo "/tmp/spin.$$")"
+
+    # Fallback bila stderr bukan TTY: tanpa animasi
+    if [[ ! -t 2 ]]; then
+        echo -e "   ${CYAN}${msg}${NC}" >&2
+        "$@" >"$tmp" 2>&1
+        local rc=$?
+        cat "$tmp"; rm -f "$tmp"
+        return $rc
+    fi
+
+    "$@" >"$tmp" 2>&1 &
+    local pid=$!
+    local frames='⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏'
+    local i=0
+    printf '\033[?25l' >&2                      # sembunyikan kursor
+    while kill -0 "$pid" 2>/dev/null; do
+        i=$(( (i + 1) % ${#frames} ))
+        printf "\r   ${CYAN}%s${NC} %s" "${frames:$i:1}" "$msg" >&2
+        sleep 0.1
+    done
+    wait "$pid"; local rc=$?
+    printf '\r\033[K\033[?25h' >&2              # bersihkan baris & tampilkan kursor
+    cat "$tmp"; rm -f "$tmp"
+    return $rc
+}

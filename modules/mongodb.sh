@@ -26,60 +26,22 @@ show_banner() {
 }
 
 # ============================================================
-# CONF — Tersimpan di: ~/.mongodb_manager.conf
-#        Contoh path : /root/.mongodb_manager.conf  (jika root)
-#                    : /home/namauser/.mongodb_manager.conf
+# CONF — Sumber kebenaran: /etc/mongod.conf
+#        Kredensial admin diinput tiap sesi (tidak disimpan ke disk).
 # ============================================================
-CONF_FILE="$HOME/.mongodb_manager.conf"
-
-load_conf() {
-  if [[ -f "$CONF_FILE" ]]; then
-    source "$CONF_FILE"
-  else
-    MONGO_PORT=27017
-    MONGO_HOST="127.0.0.1"
-    MONGO_BIND="127.0.0.1"
-    MONGO_ADMIN_USER=""
-    MONGO_ADMIN_PASS=""
-    MONGO_AUTH="yes"
-    MONGO_REPLSET=""
-  fi
-  # pastikan variabel ada meski conf lama belum punya field ini
-  # MONGO_HOST = host koneksi mongosh (selalu 127.0.0.1 untuk manajemen lokal)
-  # MONGO_BIND = bindIp di mongod.conf (127.0.0.1 atau 0.0.0.0)
-  MONGO_HOST="${MONGO_HOST:-127.0.0.1}"
-  MONGO_BIND="${MONGO_BIND:-127.0.0.1}"
-  MONGO_REPLSET="${MONGO_REPLSET:-}"
-}
-
-save_conf() {
-  cat > "$CONF_FILE" <<EOF
-MONGO_PORT=$MONGO_PORT
-MONGO_HOST=$MONGO_HOST
-MONGO_BIND=$MONGO_BIND
-MONGO_ADMIN_USER=$MONGO_ADMIN_USER
-MONGO_ADMIN_PASS=$MONGO_ADMIN_PASS
-MONGO_AUTH=$MONGO_AUTH
-MONGO_REPLSET=$MONGO_REPLSET
-EOF
-  chmod 600 "$CONF_FILE"
-}
 
 # ---------- Helper mongosh ----------
+# Susun argumen mongosh sesuai status auth, lalu jalankan dengan spinner.
+# Output (stdout/stderr) ditampilkan setelah perintah selesai.
 mongo_exec() {
   local SCRIPT="$1"
   local DB="${2:-admin}"
+  local args=(--quiet --host "$MONGO_HOST" --port "$MONGO_PORT")
   if [[ "$MONGO_AUTH" == "yes" && -n "$MONGO_ADMIN_USER" ]]; then
-    mongosh --quiet \
-      --host "$MONGO_HOST" --port "$MONGO_PORT" \
-      -u "$MONGO_ADMIN_USER" -p "$MONGO_ADMIN_PASS" \
-      --authenticationDatabase admin \
-      "$DB" --eval "$SCRIPT"
-  else
-    mongosh --quiet \
-      --host "$MONGO_HOST" --port "$MONGO_PORT" \
-      "$DB" --eval "$SCRIPT"
+    args+=(-u "$MONGO_ADMIN_USER" -p "$MONGO_ADMIN_PASS" --authenticationDatabase admin)
   fi
+  args+=("$DB" --eval "$SCRIPT")
+  run_with_spinner "Menghubungkan ke MongoDB..." mongosh "${args[@]}"
 }
 
 # ============================================================
@@ -97,71 +59,84 @@ parse_mongod_conf() {
 
 # detect_ssl_certs() dipindah ke lib/ssl.sh (dipakai bersama dengan hosting)
 
-sync_from_mongod_conf() {
-  local file_port file_bind
+# ------------------------------------------------------------
+# load_from_etc — baca konfigurasi langsung dari /etc/mongod.conf
+# (sumber kebenaran untuk port/bind/auth/replset).
+# ------------------------------------------------------------
+load_from_etc() {
+  MONGO_HOST="127.0.0.1"
+  if [[ ! -f "$MONGOD_CONF" ]]; then
+    warn "File $MONGOD_CONF tidak ditemukan — MongoDB mungkin belum terinstall."
+    MONGO_PORT="${MONGO_PORT:-27017}"
+    MONGO_BIND="${MONGO_BIND:-127.0.0.1}"
+    MONGO_AUTH="${MONGO_AUTH:-no}"
+    MONGO_REPLSET="${MONGO_REPLSET:-}"
+    return
+  fi
+
+  local file_port file_bind file_rs
   file_port=$(parse_mongod_conf "port")
   file_bind=$(parse_mongod_conf "bindIp")
-  RUNNING_PORT="${file_port:-27017}"
-  RUNNING_BIND="${file_bind:-127.0.0.1}"
+  file_rs=$(grep -E "^\s+replSetName\s*:" "$MONGOD_CONF" 2>/dev/null \
+    | awk -F':' '{gsub(/[[:space:]]/, "", $2); print $2}' | head -1)
+
+  MONGO_PORT="${file_port:-27017}"
+  MONGO_BIND="${file_bind:-127.0.0.1}"
+  MONGO_REPLSET="${file_rs:-}"
   if grep -qE "^\s+authorization\s*:\s*enabled" "$MONGOD_CONF" 2>/dev/null; then
-    RUNNING_AUTH="yes"
-  elif grep -qE "^\s+authorization\s*:\s*disabled" "$MONGOD_CONF" 2>/dev/null; then
-    RUNNING_AUTH="no"
+    MONGO_AUTH="yes"
   else
-    RUNNING_AUTH="$MONGO_AUTH"
+    MONGO_AUTH="no"
   fi
 }
 
-detect_running_config() {
-  load_conf
-  if [[ ! -f "$MONGOD_CONF" ]]; then
-    warn "File $MONGOD_CONF tidak ditemukan — menggunakan konfigurasi tersimpan."
-    return
-  fi
-  sync_from_mongod_conf
-  local changed=0
-  if [[ "$RUNNING_PORT" != "$MONGO_PORT" ]]; then
-    warn "Port berbeda!"
-    echo "    Tersimpan ($CONF_FILE) : $MONGO_PORT"
-    echo "    Aktual  ($MONGOD_CONF) : $RUNNING_PORT"
-    changed=1
-  fi
-  if [[ "$RUNNING_BIND" != "$MONGO_BIND" ]]; then
-    warn "Bind IP berbeda!"
-    echo "    Tersimpan ($CONF_FILE) : $MONGO_BIND"
-    echo "    Aktual  ($MONGOD_CONF) : $RUNNING_BIND"
-    changed=1
-  fi
-  if [[ "$RUNNING_AUTH" != "$MONGO_AUTH" ]]; then
-    warn "Status auth berbeda!"
-    echo "    Tersimpan ($CONF_FILE) : $MONGO_AUTH"
-    echo "    Aktual  ($MONGOD_CONF) : $RUNNING_AUTH"
-    changed=1
-  fi
-  if [[ "$changed" -eq 1 ]]; then
+# ------------------------------------------------------------
+# ensure_admin_creds — minta kredensial admin (tiap sesi, tidak disimpan).
+# Hanya jika auth aktif. Memverifikasi koneksi via ping, ulang bila gagal.
+# ------------------------------------------------------------
+ensure_admin_creds() {
+  [[ "$MONGO_AUTH" != "yes" ]] && return 0
+  # Sudah ada di memori sesi → pakai ulang
+  [[ -n "$MONGO_ADMIN_USER" && -n "$MONGO_ADMIN_PASS" ]] && return 0
+
+  while true; do
     echo
-    ask "Konfigurasi tersimpan BERBEDA dengan $MONGOD_CONF yang aktual."
-    echo "    1) Gunakan konfigurasi dari mongod.conf (direkomendasikan)"
-    echo "    2) Tetap gunakan konfigurasi tersimpan"
-    read -rp "  Pilihan [1]: " sync_choice
-    if [[ "$sync_choice" != "2" ]]; then
-      MONGO_PORT="$RUNNING_PORT"
-      MONGO_BIND="$RUNNING_BIND"
-      MONGO_AUTH="$RUNNING_AUTH"
-      if [[ "$MONGO_AUTH" == "yes" && -z "$MONGO_ADMIN_USER" ]]; then
-        echo
-        warn "Auth aktif tapi kredensial belum tersimpan."
-        read -rp "  Username admin MongoDB: " MONGO_ADMIN_USER
-        read -rsp "  Password admin MongoDB: " MONGO_ADMIN_PASS; echo
-      fi
-      save_conf
-      success "Konfigurasi disinkronkan dari $MONGOD_CONF."
-    else
-      warn "Menggunakan konfigurasi tersimpan — pastikan MongoDB berjalan di port $MONGO_PORT."
+    ask "Auth MongoDB aktif — masukkan kredensial admin (tidak disimpan)."
+    read -rp  "  Username admin MongoDB: " MONGO_ADMIN_USER
+    read -rsp "  Password admin MongoDB: " MONGO_ADMIN_PASS; echo
+
+    if mongo_ping; then
+      success "Koneksi berhasil."
+      return 0
     fi
-  else
-    info "Konfigurasi sesuai (port: $MONGO_PORT, bind: $MONGO_BIND, auth: $MONGO_AUTH)."
+
+    warn "Koneksi/autentikasi gagal."
+    read -rp "  Coba input ulang? [Y/n]: " _retry
+    if [[ "$_retry" =~ ^[Nn]$ ]]; then
+      MONGO_ADMIN_USER=""; MONGO_ADMIN_PASS=""
+      return 1
+    fi
+    MONGO_ADMIN_USER=""; MONGO_ADMIN_PASS=""
+  done
+}
+
+# Ping ringkas untuk verifikasi koneksi (output disembunyikan, dibungkus spinner).
+mongo_ping() {
+  local args=(--quiet --host "$MONGO_HOST" --port "$MONGO_PORT")
+  if [[ "$MONGO_AUTH" == "yes" && -n "$MONGO_ADMIN_USER" ]]; then
+    args+=(-u "$MONGO_ADMIN_USER" -p "$MONGO_ADMIN_PASS" --authenticationDatabase admin)
   fi
+  args+=(admin --eval "db.runCommand({ ping: 1 }).ok")
+  # Output ping disembunyikan (stdout); animasi spinner tetap tampil via stderr.
+  run_with_spinner "Memverifikasi koneksi..." mongosh "${args[@]}" >/dev/null
+}
+
+# ------------------------------------------------------------
+# prepare_conn — dipanggil sebelum operasi yang butuh koneksi DB.
+# ------------------------------------------------------------
+prepare_conn() {
+  load_from_etc
+  ensure_admin_creds
 }
 
 # ============================================================
@@ -410,10 +385,10 @@ MONGOCFG
   sleep 3
 
   if [[ "$MONGO_AUTH" == "yes" ]]; then
-    info "Membuat user admin..."
     sudo sed -i 's/authorization: enabled/authorization: disabled/' /etc/mongod.conf
     sudo systemctl restart mongod; sleep 2
-    mongosh --quiet --host 127.0.0.1 --port "$MONGO_PORT" admin --eval "
+    run_with_spinner "Membuat user admin..." \
+      mongosh --quiet --host 127.0.0.1 --port "$MONGO_PORT" admin --eval "
       db.createUser({
         user: '$MONGO_ADMIN_USER', pwd: '$MONGO_ADMIN_PASS',
         roles: [
@@ -430,36 +405,28 @@ MONGOCFG
 
   # -- Inisialisasi Replica Set --
   if [[ -n "$MONGO_REPLSET" ]]; then
-    info "Menginisialisasi replica set '$MONGO_REPLSET'..."
     sleep 2
     local RS_HOST="127.0.0.1"
+    local rs_args=(--quiet --host "$RS_HOST" --port "$MONGO_PORT")
     if [[ "$MONGO_AUTH" == "yes" ]]; then
-      mongosh --quiet         --host "$RS_HOST" --port "$MONGO_PORT"         -u "$MONGO_ADMIN_USER" -p "$MONGO_ADMIN_PASS"         --authenticationDatabase admin         admin --eval "
-          rs.initiate({
-            _id: '$MONGO_REPLSET',
-            members: [{ _id: 0, host: '$RS_HOST:$MONGO_PORT' }]
-          });
-          sleep(2000);
-          print('Replica set status: ' + rs.status().ok);
-        "
-    else
-      mongosh --quiet         --host "$RS_HOST" --port "$MONGO_PORT"         admin --eval "
-          rs.initiate({
-            _id: '$MONGO_REPLSET',
-            members: [{ _id: 0, host: '$RS_HOST:$MONGO_PORT' }]
-          });
-          sleep(2000);
-          print('Replica set status: ' + rs.status().ok);
-        "
+      rs_args+=(-u "$MONGO_ADMIN_USER" -p "$MONGO_ADMIN_PASS" --authenticationDatabase admin)
     fi
+    rs_args+=(admin --eval "
+          rs.initiate({
+            _id: '$MONGO_REPLSET',
+            members: [{ _id: 0, host: '$RS_HOST:$MONGO_PORT' }]
+          });
+          sleep(2000);
+          print('Replica set status: ' + rs.status().ok);
+        ")
+    run_with_spinner "Menginisialisasi replica set '$MONGO_REPLSET'..." \
+      mongosh "${rs_args[@]}"
     success "Replica set '$MONGO_REPLSET' berhasil diinisialisasi."
   fi
 
   if [[ "$MONGO_BIND" == "0.0.0.0" ]]; then
     command -v ufw &>/dev/null && { info "Membuka port $MONGO_PORT di UFW..."; sudo ufw allow "$MONGO_PORT"/tcp; }
   fi
-
-  save_conf
 
   # Bangun query string koneksi
   local QS=""
@@ -517,7 +484,6 @@ MONGOCFG
     echo "    TLS/SSL     : tidak"
   fi
   echo "    Config file : $MONGOD_CONF"
-  echo "    Saved conf  : $CONF_FILE"
 
   echo
   echo -e "  ${BLD}── Koneksi ───────────────────────────────────${NC}"
@@ -762,7 +728,7 @@ _change_role() {
 
 # Submenu Manage User
 manage_user_menu() {
-  load_conf
+  prepare_conn
   while true; do
     show_banner
     echo -e "${BLD}  [2] Manage User${NC}"
@@ -940,7 +906,7 @@ _drop_collection() {
 
 # Submenu Manage Database
 manage_database_menu() {
-  load_conf
+  prepare_conn
   while true; do
     show_banner
     echo -e "${BLD}  [3] Manage Database${NC}"
@@ -979,7 +945,7 @@ backup_db() {
   show_banner
   echo -e "${BLD}  [4] Backup Database${NC}"; line
 
-  detect_running_config
+  prepare_conn
   echo
 
   info "Daftar database yang tersedia:"
@@ -999,11 +965,11 @@ backup_db() {
     AUTH_ARGS="-u $MONGO_ADMIN_USER -p $MONGO_ADMIN_PASS --authenticationDatabase admin"
 
   if [[ -n "$BKP_DB" ]]; then
-    info "Membackup database '$BKP_DB'..."
-    mongodump --host "$MONGO_HOST" --port "$MONGO_PORT" $AUTH_ARGS --db "$BKP_DB" --out "$OUT_DIR"
+    run_with_spinner "Membackup database '$BKP_DB'..." \
+      mongodump --host "$MONGO_HOST" --port "$MONGO_PORT" $AUTH_ARGS --db "$BKP_DB" --out "$OUT_DIR"
   else
-    info "Membackup semua database..."
-    mongodump --host "$MONGO_HOST" --port "$MONGO_PORT" $AUTH_ARGS --out "$OUT_DIR"
+    run_with_spinner "Membackup semua database..." \
+      mongodump --host "$MONGO_HOST" --port "$MONGO_PORT" $AUTH_ARGS --out "$OUT_DIR"
   fi
 
   info "Mengompres backup..."
@@ -1025,7 +991,7 @@ restore_db() {
   show_banner
   echo -e "${BLD}  [5] Restore Database${NC}"; line
 
-  detect_running_config
+  prepare_conn
   echo
 
   read -rp "  Path file backup (.tar.gz atau direktori): " RST_PATH
@@ -1057,11 +1023,11 @@ restore_db() {
   fi
 
   if [[ -n "$RST_DB" ]]; then
-    info "Merestore ke database '$RST_DB'..."
-    mongorestore --host "$MONGO_HOST" --port "$MONGO_PORT" $AUTH_ARGS --db "$RST_DB" --drop "$RST_DIR/$RST_DB"
+    run_with_spinner "Merestore ke database '$RST_DB'..." \
+      mongorestore --host "$MONGO_HOST" --port "$MONGO_PORT" $AUTH_ARGS --db "$RST_DB" --drop "$RST_DIR/$RST_DB"
   else
-    info "Merestore semua database..."
-    mongorestore --host "$MONGO_HOST" --port "$MONGO_PORT" $AUTH_ARGS --drop "$RST_DIR"
+    run_with_spinner "Merestore semua database..." \
+      mongorestore --host "$MONGO_HOST" --port "$MONGO_PORT" $AUTH_ARGS --drop "$RST_DIR"
   fi
 
   [[ -d "/tmp/mongo_restore_$$" ]] && rm -rf "/tmp/mongo_restore_$$"
@@ -1180,14 +1146,14 @@ service_menu() {
 # MAIN MENU
 # ============================================================
 main_menu() {
-  load_conf
   while true; do
+    load_from_etc
     show_banner
     echo -e "  ${BLD}Konfigurasi aktif:${NC}"
     echo "    Host : ${MONGO_HOST}:${MONGO_PORT}  |  Bind: ${MONGO_BIND}  |  Auth: ${MONGO_AUTH}"
     [[ "$MONGO_AUTH" == "yes" && -n "$MONGO_ADMIN_USER" ]] && echo "    User : ${MONGO_ADMIN_USER}"
     [[ -n "$MONGO_REPLSET" ]] && echo "    RS   : ${MONGO_REPLSET}"
-    echo -e "    Conf : ${CYN}${CONF_FILE}${NC}"
+    echo -e "    Sumber: ${CYN}${MONGOD_CONF}${NC}"
     echo
     line
     echo -e "  ${BLD}Pilih menu:${NC}"

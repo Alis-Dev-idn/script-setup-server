@@ -4,7 +4,12 @@
 #  Menggabungkan modul Hosting (vsftpd+Nginx+SSL), MongoDB
 #  & Node.js/PM2
 # ============================================================
-ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# Resolusikan symlink agar tetap benar saat dijalankan via /usr/local/bin/setup-server
+_SELF="${BASH_SOURCE[0]}"
+if command -v readlink >/dev/null 2>&1; then
+  _SELF="$(readlink -f "$_SELF" 2>/dev/null || echo "$_SELF")"
+fi
+ROOT_DIR="$(cd "$(dirname "$_SELF")" && pwd)"
 export ROOT_DIR
 
 # ---------- Library bersama ----------

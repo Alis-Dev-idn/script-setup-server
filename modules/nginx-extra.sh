@@ -41,27 +41,37 @@ DEFAULT_MQTT_BACKEND_PORT="1883"
 # HELPER: pastikan modul stream Nginx tersedia & ter-include
 # ================================================================
 _ensure_stream_support() {
-    if ! nginx -V 2>&1 | grep -q -- '--with-stream' \
-       && ! ls /etc/nginx/modules-enabled/*stream* &>/dev/null \
-       && ! dpkg -l 2>/dev/null | grep -q libnginx-mod-stream; then
-        log_warn "Modul Nginx 'stream' belum terdeteksi."
-        if confirm "Install libnginx-mod-stream sekarang?"; then
+    sudo mkdir -p "$STREAMS_AVAILABLE" "$STREAMS_ENABLED"
+
+    # --- Pastikan modul 'stream' benar-benar AKTIF (bukan sekadar dynamic tak di-load) ---
+    local v; v="$(nginx -V 2>&1)"
+    local ok=0
+    if grep -qE -- '--with-stream(=static)?([[:space:]]|$)' <<< "$v"; then
+        ok=1   # stream built-in statis, selalu tersedia
+    elif grep -q -- '--with-stream=dynamic' <<< "$v" \
+         && { ls /etc/nginx/modules-enabled/*stream*.conf &>/dev/null \
+              || grep -rqs 'ngx_stream_module' /etc/nginx/modules-enabled/ 2>/dev/null; }; then
+        ok=1   # dynamic & modulnya sudah di-load
+    fi
+
+    if [[ $ok -eq 0 ]]; then
+        log_warn "Modul Nginx 'stream' belum aktif (dynamic tapi belum di-load / belum terpasang)."
+        if confirm "Install & aktifkan libnginx-mod-stream sekarang?"; then
             sudo apt update -qq
             sudo apt install -y libnginx-mod-stream &>/dev/null \
-                && log_ok "libnginx-mod-stream terinstall." \
+                && log_ok "libnginx-mod-stream terinstall & diaktifkan." \
                 || { log_err "Gagal install libnginx-mod-stream."; return 1; }
         else
-            log_warn "Tanpa modul stream, MQTT TLS tidak akan jalan."
+            log_warn "Tanpa modul stream aktif, 'stream {}' akan ditolak nginx -t."
             return 1
         fi
     fi
 
-    sudo mkdir -p "$STREAMS_AVAILABLE" "$STREAMS_ENABLED"
-
+    # --- Pastikan blok stream{} + include ada di nginx.conf ---
     if ! grep -qE 'include\s+/etc/nginx/streams-enabled/\*\.conf;' "$NGINX_CONF"; then
         if grep -qE '^\s*stream\s*\{' "$NGINX_CONF"; then
-            log_warn "Ada blok 'stream {' di $NGINX_CONF tapi tanpa include streams-enabled."
-            log_warn "Tambahkan baris berikut ke dalam blok stream itu secara manual:"
+            log_warn "Sudah ada blok 'stream {' di $NGINX_CONF tanpa include streams-enabled."
+            log_warn "Tambahkan baris ini ke dalam blok stream tsb secara manual, lalu ulangi:"
             echo    "      include /etc/nginx/streams-enabled/*.conf;"
             return 1
         fi
@@ -398,7 +408,9 @@ STREAMEOF
 
     sudo ln -sf "$conf" "$STREAMS_ENABLED/mqtt-${slug}.conf"
 
-    if sudo nginx -t &>/dev/null; then
+    local _test_out
+    _test_out="$(sudo nginx -t 2>&1)"
+    if [[ $? -eq 0 ]]; then
         sudo systemctl reload nginx
         command -v ufw &>/dev/null && sudo ufw allow "$TLS_PORT/tcp" comment "MQTT TLS" &>/dev/null
         echo ""
@@ -416,8 +428,14 @@ STREAMEOF
         echo "                  -t test -m hello"
         echo -e "${CYAN}============================================================${NC}"
     else
-        log_err "Nginx config error! Cek: sudo nginx -t"
-        log_warn "Backup (jika ada) tersedia di ${conf}.bak.*"
+        log_err "Nginx config error! Output 'nginx -t':"
+        echo "$_test_out" | sed 's/^/     /'
+        echo ""
+        # Rollback: nonaktifkan stream ini agar konfigurasi Nginx tetap valid
+        sudo rm -f "$STREAMS_ENABLED/mqtt-${slug}.conf"
+        log_warn "Stream dinonaktifkan (symlink streams-enabled dihapus)."
+        log_info "File config tetap ada di: $conf (+ backup ${conf}.bak.*)"
+        log_info "Perbaiki penyebab di atas, lalu jalankan menu ini lagi."
     fi
 
     echo ""

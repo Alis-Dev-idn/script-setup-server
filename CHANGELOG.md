@@ -9,6 +9,14 @@ dan project ini memakai [Semantic Versioning](https://semver.org/lang/id/).
 
 ## [Unreleased]
 
+### Fixed
+- **MQTT TLS**: deteksi modul Nginx `stream` kini membedakan build statis vs
+  `--with-stream=dynamic` yang belum di-`load_module` (penyebab `unknown directive
+  "stream"` walau `--with-stream` terlihat di `nginx -V`).
+- **MQTT TLS**: saat `nginx -t` gagal, pesan error asli kini **ditampilkan** (tidak
+  lagi dibuang ke `/dev/null`) dan symlink `streams-enabled` yang baru dibuat
+  **dinonaktifkan otomatis** agar konfigurasi Nginx yang berjalan tetap valid.
+
 ### Added
 - Modul **Nginx Extra** (`modules/nginx-extra.sh`), menu utama nomor 4:
   - **WSS Reverse Proxy** dua mode:

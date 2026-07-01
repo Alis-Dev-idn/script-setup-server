@@ -631,7 +631,7 @@ server {
     index index.html index.htm;
     location / { $TRY_FILES; }
     location /api/ {
-        proxy_pass         http://127.0.0.1:$API_PORT/;
+        proxy_pass         http://127.0.0.1:$API_PORT;
         proxy_http_version 1.1;
         proxy_set_header   Upgrade \$http_upgrade;
         proxy_set_header   Connection 'upgrade';
@@ -652,7 +652,7 @@ server {
     index index.html index.htm;
     location / { $TRY_FILES; }
     location /api/ {
-        proxy_pass         http://127.0.0.1:$API_PORT/;
+        proxy_pass         http://127.0.0.1:$API_PORT;
         proxy_http_version 1.1;
         proxy_set_header   Upgrade \$http_upgrade;
         proxy_set_header   Connection 'upgrade';

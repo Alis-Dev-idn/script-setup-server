@@ -10,6 +10,14 @@ dan project ini memakai [Semantic Versioning](https://semver.org/lang/id/).
 ## [Unreleased]
 
 ### Fixed
+- **Hosting/Nginx API proxy**: hilangkan trailing slash pada `proxy_pass`
+  (`http://127.0.0.1:$API_PORT/` → `http://127.0.0.1:$API_PORT`) di config website
+  agar path `/api/...` diteruskan utuh ke backend (trailing slash bikin routing salah).
+- **MQTT TLS**: perjelas bahwa file `streams-*/mqtt-*.conf` adalah STREAM server yang
+  di-include di dalam `stream {}` (tambah komentar di file), serta tambah diagnostik
+  pasca-setup: cek port TLS sudah `LISTEN` dan broker backend punya listener —
+  memberi peringatan bila broker tidak listen di port tujuan (penyebab umum mqtts
+  gagal connect meski konfigurasi TLS benar).
 - **MQTT TLS**: deteksi modul Nginx `stream` kini membedakan build statis vs
   `--with-stream=dynamic` yang belum di-`load_module` (penyebab `unknown directive
   "stream"` walau `--with-stream` terlihat di `nginx -V`).

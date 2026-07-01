@@ -392,6 +392,9 @@ nx_setup_mqtt_tls() {
 
     sudo tee "$conf" > /dev/null << STREAMEOF
 # MQTT over TLS (stream termination) - dikelola oleh setup-server (nginx-extra)
+# CATATAN: file ini di-include DI DALAM blok 'stream {}' pada nginx.conf
+#          (include /etc/nginx/streams-enabled/*.conf;), sehingga 'server {}'
+#          di bawah adalah STREAM server (TCP), BUKAN HTTP server.
 server {
     listen $TLS_PORT ssl;
 
@@ -413,6 +416,16 @@ STREAMEOF
     if [[ $? -eq 0 ]]; then
         sudo systemctl reload nginx
         command -v ufw &>/dev/null && sudo ufw allow "$TLS_PORT/tcp" comment "MQTT TLS" &>/dev/null
+
+        # Diagnostik: pastikan port TLS listen & broker backend punya listener
+        local _tls_state="tidak diketahui" _be_state="tidak diketahui"
+        if command -v ss &>/dev/null; then
+            sudo ss -ltn 2>/dev/null | grep -q ":$TLS_PORT " \
+                && _tls_state="LISTEN" || _tls_state="BELUM listen"
+            sudo ss -ltn 2>/dev/null | grep -q ":$BACKEND_PORT " \
+                && _be_state="LISTEN" || _be_state="TIDAK ada listener"
+        fi
+
         echo ""
         echo -e "${CYAN}============================================================${NC}"
         echo -e "${CYAN} RINGKASAN - MQTT TLS BERHASIL DIBUAT                       ${NC}"
@@ -421,8 +434,22 @@ STREAMEOF
         echo -e "  Endpoint    : ${GREEN}mqtts://$MQTT_DOMAIN:$TLS_PORT${NC}"
         echo "  Forward ke  : $BACKEND_HOST:$BACKEND_PORT (plain)"
         echo "  Config      : $conf"
+        echo "                (STREAM server, di-include di dalam stream{} nginx.conf)"
+        echo "  Port TLS    : $_tls_state    |    Broker backend: $_be_state"
         echo "  Firewall    : buka TCP $TLS_PORT di UFW & cloud security group."
         echo ""
+        if [[ "$_be_state" != "LISTEN" ]]; then
+            log_warn "Broker tidak terdeteksi listen di $BACKEND_HOST:$BACKEND_PORT."
+            log_warn "Koneksi mqtts akan gagal walau TLS-nya benar. Pastikan broker"
+            log_warn "(Mosquitto) listen plain di port itu (default Mosquitto = 1883)."
+            log_info "Cek broker: sudo ss -ltnp | grep mosquitto"
+            echo ""
+        fi
+        if [[ "$_tls_state" != "LISTEN" ]]; then
+            log_warn "Port $TLS_PORT belum listen. Pastikan blok stream{} ter-include:"
+            log_info "  sudo nginx -T 2>/dev/null | grep -n 'streams-enabled'"
+            echo ""
+        fi
         echo "  Uji koneksi (butuh mosquitto-clients):"
         echo "    mosquitto_pub -h $MQTT_DOMAIN -p $TLS_PORT --capath /etc/ssl/certs \\"
         echo "                  -t test -m hello"

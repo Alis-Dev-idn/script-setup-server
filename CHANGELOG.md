@@ -10,6 +10,13 @@ dan project ini memakai [Semantic Versioning](https://semver.org/lang/id/).
 ## [Unreleased]
 
 ### Fixed
+- **MongoDB Manager — Setup TLS**: `setup_mongodb()` menulis `mode: requireTLS`
+  tanpa `CAFile` ketika operator tidak mengisi path CA — MongoDB modern menolak
+  start dengan `InvalidOptions: The use of TLS without specifying a chain of trust
+  is no longer supported` (SERVER-72839). Kini bila CAFile kosong, skrip menambahkan
+  `allowConnectionsWithoutCertificates: true` (TLS untuk enkripsi transport tanpa
+  mewajibkan sertifikat client). Perbaikan config yang sudah terlanjur gagal bisa
+  dilakukan lewat menu **Service MongoDB > 6. Perbaiki masalah konfigurasi umum**.
 - **MongoDB Manager — Setup**: `setup_mongodb()` gagal start mongod saat auth +
   replica set diaktifkan bersamaan — MongoDB mewajibkan `security.keyFile` bila
   `authorization: enabled` dipakai bersama `replication.replSetName`
@@ -42,9 +49,10 @@ dan project ini memakai [Semantic Versioning](https://semver.org/lang/id/).
   **dinonaktifkan otomatis** agar konfigurasi Nginx yang berjalan tetap valid.
 
 ### Added
-- **MongoDB Manager — Service**: tambah opsi "Perbaiki keyFile (auth + replica set)"
-  di menu Service MongoDB (nomor 6), untuk memperbaiki instalasi lama yang sudah
-  terlanjur gagal start karena kombinasi auth + replica set tanpa `security.keyFile`
+- **MongoDB Manager — Service**: tambah opsi "Perbaiki masalah konfigurasi umum
+  (keyFile & TLS)" di menu Service MongoDB (nomor 6), untuk memperbaiki instalasi
+  lama yang sudah terlanjur gagal start karena (a) kombinasi auth + replica set
+  tanpa `security.keyFile`, dan/atau (b) TLS aktif tanpa CAFile/chain-of-trust
   (lihat entri Fixed di atas) — tanpa perlu mengulang seluruh wizard Setup MongoDB
   (yang akan minta ulang password admin, dsb). Backup `/etc/mongod.conf` dibuat
   otomatis sebelum diubah.

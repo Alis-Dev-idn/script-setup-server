@@ -53,7 +53,7 @@ setup-server  (Panel Terpadu)
 |     |     |-- 3. Stop
 |     |     |-- 4. Restart
 |     |     |-- 5. Reload konfigurasi
-|     |     |-- 6. Perbaiki keyFile (auth + replica set)
+|     |     |-- 6. Perbaiki masalah konfigurasi umum (keyFile & TLS)
 |     |     +-- 7. Kembali
 |     +-- 7. Keluar
 |

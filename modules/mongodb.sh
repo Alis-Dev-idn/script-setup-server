@@ -399,7 +399,14 @@ https://repo.mongodb.org/apt/ubuntu ${CODENAME}/mongodb-org/${MONGO_VER}.0 multi
   if [[ "$MONGO_TLS" == "yes" && -n "$MONGO_TLS_PEM" ]]; then
     TLS_SECTION=$'\n  tls:\n    mode: requireTLS'
     TLS_SECTION+=$'\n    certificateKeyFile: '"$MONGO_TLS_PEM"
-    [[ -n "$MONGO_TLS_CA" ]] && TLS_SECTION+=$'\n    CAFile: '"$MONGO_TLS_CA"
+    if [[ -n "$MONGO_TLS_CA" ]]; then
+      TLS_SECTION+=$'\n    CAFile: '"$MONGO_TLS_CA"
+    else
+      # Tanpa CAFile (chain of trust), MongoDB modern menolak start kecuali
+      # eksplisit diizinkan (SERVER-72839): "The use of TLS without specifying
+      # a chain of trust is no longer supported."
+      TLS_SECTION+=$'\n    allowConnectionsWithoutCertificates: true'
+    fi
   fi
   sudo tee /etc/mongod.conf > /dev/null <<MONGOCFG
 systemLog:
@@ -1202,53 +1209,70 @@ restore_db() {
 }
 
 # ------------------------------------------------------------
-# Perbaiki keyFile untuk kombinasi auth + replica set.
-# MongoDB mewajibkan security.keyFile saat authorization: enabled dipakai
-# bersama replication.replSetName; instalasi lama (sebelum fix ini) tidak
-# membuatnya, sehingga mongod gagal start dengan:
-#   "security.keyFile is required when authorization is enabled with replica sets"
+# Perbaiki masalah konfigurasi umum yang menyebabkan mongod gagal start:
+#   1) keyFile hilang saat authorization: enabled dipakai bersama
+#      replication.replSetName — wajib sejak MongoDB modern:
+#      "security.keyFile is required when authorization is enabled with replica sets"
+#   2) TLS (mode: requireTLS) aktif tanpa CAFile (chain of trust) —
+#      MongoDB 6.1+ menolak start tanpa allowConnectionsWithoutCertificates:
+#      "The use of TLS without specifying a chain of trust is no longer
+#      supported." (SERVER-72839)
+# Backup /etc/mongod.conf dibuat sekali sebelum perubahan apa pun.
 # ------------------------------------------------------------
-_repair_mongo_keyfile() {
+_repair_mongo_config() {
   echo
   if [[ ! -f "$MONGOD_CONF" ]]; then
     error "File $MONGOD_CONF tidak ditemukan."
     pause; return
   fi
 
+  local BACKUP_CONF="" changed="no"
+
+  # --- 1) keyFile untuk auth + replica set ---
   local has_auth="no" has_rs="no" has_keyfile="no"
   grep -qE "^\s+authorization\s*:\s*enabled" "$MONGOD_CONF" 2>/dev/null && has_auth="yes"
   grep -qE "^\s+replSetName\s*:" "$MONGOD_CONF" 2>/dev/null && has_rs="yes"
   grep -qE "^\s+keyFile\s*:" "$MONGOD_CONF" 2>/dev/null && has_keyfile="yes"
 
-  if [[ "$has_auth" != "yes" || "$has_rs" != "yes" ]]; then
-    info "Kombinasi auth + replica set tidak terdeteksi di konfigurasi saat ini — keyFile tidak diperlukan."
-    pause; return
-  fi
+  if [[ "$has_auth" == "yes" && "$has_rs" == "yes" && "$has_keyfile" != "yes" ]]; then
+    warn "keyFile belum ada padahal auth + replica set aktif — penyebab umum mongod gagal start."
+    if [[ -z "$BACKUP_CONF" ]]; then
+      BACKUP_CONF="$MONGOD_CONF.bak.$(date +%Y%m%d%H%M%S)"
+      sudo cp "$MONGOD_CONF" "$BACKUP_CONF"
+      info "Backup konfigurasi: $BACKUP_CONF"
+    fi
 
-  if [[ "$has_keyfile" == "yes" ]]; then
-    info "keyFile sudah terpasang di konfigurasi."
-    read -rp "  Buat ulang keyFile baru (regenerate)? [y/N]: " regen
-    [[ ! "$regen" =~ ^[Yy]$ ]] && { pause; return; }
-  else
-    warn "keyFile belum ada padahal auth + replica set aktif — ini penyebab mongod gagal start."
-  fi
-
-  local KEYFILE_PATH
-  KEYFILE_PATH=$(grep -E "^\s+keyFile\s*:" "$MONGOD_CONF" 2>/dev/null \
-    | awk -F':' '{gsub(/[[:space:]]/, "", $2); print $2}' | head -1)
-  KEYFILE_PATH="${KEYFILE_PATH:-/var/lib/mongodb/keyfile}"
-
-  local BACKUP_CONF="$MONGOD_CONF.bak.$(date +%Y%m%d%H%M%S)"
-  sudo cp "$MONGOD_CONF" "$BACKUP_CONF"
-  info "Backup konfigurasi: $BACKUP_CONF"
-
-  info "Membuat keyFile di $KEYFILE_PATH..."
-  sudo openssl rand -base64 756 | sudo tee "$KEYFILE_PATH" > /dev/null
-  sudo chmod 400 "$KEYFILE_PATH"
-  sudo chown mongodb:mongodb "$KEYFILE_PATH"
-
-  if [[ "$has_keyfile" != "yes" ]]; then
+    local KEYFILE_PATH="/var/lib/mongodb/keyfile"
+    info "Membuat keyFile di $KEYFILE_PATH..."
+    sudo openssl rand -base64 756 | sudo tee "$KEYFILE_PATH" > /dev/null
+    sudo chmod 400 "$KEYFILE_PATH"
+    sudo chown mongodb:mongodb "$KEYFILE_PATH"
     sudo sed -i "/^\s*authorization\s*:\s*enabled/a\\  keyFile: ${KEYFILE_PATH}" "$MONGOD_CONF"
+    changed="yes"
+  fi
+
+  # --- 2) TLS tanpa chain of trust (CAFile) ---
+  local has_tls="no" has_cafile="no" has_allow_no_cert="no"
+  grep -qE "^\s+mode\s*:\s*requireTLS" "$MONGOD_CONF" 2>/dev/null && has_tls="yes"
+  grep -qE "^\s+CAFile\s*:" "$MONGOD_CONF" 2>/dev/null && has_cafile="yes"
+  grep -qE "^\s+allowConnectionsWithoutCertificates\s*:" "$MONGOD_CONF" 2>/dev/null && has_allow_no_cert="yes"
+
+  if [[ "$has_tls" == "yes" && "$has_cafile" != "yes" && "$has_allow_no_cert" != "yes" ]]; then
+    warn "TLS aktif tanpa CAFile (chain of trust) — MongoDB menolak start (SERVER-72839)."
+    if [[ -z "$BACKUP_CONF" ]]; then
+      BACKUP_CONF="$MONGOD_CONF.bak.$(date +%Y%m%d%H%M%S)"
+      sudo cp "$MONGOD_CONF" "$BACKUP_CONF"
+      info "Backup konfigurasi: $BACKUP_CONF"
+    fi
+
+    info "Menambahkan 'allowConnectionsWithoutCertificates: true'..."
+    sudo sed -i "/^\s*certificateKeyFile\s*:/a\\    allowConnectionsWithoutCertificates: true" "$MONGOD_CONF"
+    changed="yes"
+  fi
+
+  if [[ "$changed" != "yes" ]]; then
+    info "Tidak ditemukan masalah konfigurasi umum (keyFile / TLS chain of trust) yang perlu diperbaiki."
+    pause; return
   fi
 
   info "Merestart mongod..."
@@ -1256,7 +1280,7 @@ _repair_mongo_keyfile() {
   sleep 2
 
   if systemctl is-active --quiet mongod; then
-    success "MongoDB berhasil direstart dengan keyFile aktif."
+    success "MongoDB berhasil direstart."
   else
     error "MongoDB masih gagal start. Log terbaru:"
     echo
@@ -1315,7 +1339,7 @@ service_menu() {
     echo "    3)  Stop"
     echo "    4)  Restart"
     echo "    5)  Reload konfigurasi (tanpa restart)"
-    echo "    6)  Perbaiki keyFile (auth + replica set)"
+    echo "    6)  Perbaiki masalah konfigurasi umum (keyFile & TLS)"
     echo "    7)  Kembali ke menu utama"
     echo
     line
@@ -1372,7 +1396,7 @@ service_menu() {
           || error "Gagal reload — cek log untuk detail."
         sleep 1
         ;;
-      6) _repair_mongo_keyfile ;;
+      6) _repair_mongo_config ;;
       7) return ;;
       *) warn "Pilihan tidak valid."; sleep 1 ;;
     esac

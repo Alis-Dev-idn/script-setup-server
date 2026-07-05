@@ -198,11 +198,15 @@ install_nodejs() {
     sudo rm -f /etc/apt/sources.list.d/nodesource.list 2>/dev/null
     sudo rm -f /etc/apt/keyrings/nodesource.gpg 2>/dev/null
 
-    # Import GPG key
+    # Pastikan curl & gnupg tersedia (dibutuhkan untuk dearmor GPG key di bawah)
+    sudo apt-get install -y curl gnupg 2>/dev/null
+
+    # Import GPG key — harus di-dearmor ke format binary, "signed-by" tidak
+    # menerima key ASCII-armored mentah (penyebab "NO_PUBKEY .../not signed").
     sudo mkdir -p /etc/apt/keyrings
-    if ! sudo curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key \
-         -o /etc/apt/keyrings/nodesource.gpg; then
-        error "Gagal mengunduh GPG key NodeSource! Instalasi dibatalkan (Node.js lama tidak diubah)."
+    if ! curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key \
+         | sudo gpg --dearmor -o /etc/apt/keyrings/nodesource.gpg; then
+        error "Gagal mengunduh/memproses GPG key NodeSource! Instalasi dibatalkan (Node.js lama tidak diubah)."
         pause; return 1
     fi
 
@@ -416,9 +420,11 @@ update_nodejs() {
                 # Ganti repo NodeSource
                 sudo rm -f /etc/apt/sources.list.d/nodesource.list 2>/dev/null
                 sudo mkdir -p /etc/apt/keyrings
-                if ! sudo curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key \
-                    -o /etc/apt/keyrings/nodesource.gpg; then
-                    error "Gagal mengunduh GPG key NodeSource! Upgrade dibatalkan (Node.js lama tidak diubah)."
+                sudo apt-get install -y curl gnupg 2>/dev/null
+                # Dearmor ke binary — "signed-by" tidak menerima key ASCII-armored mentah.
+                if ! curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key \
+                    | sudo gpg --dearmor -o /etc/apt/keyrings/nodesource.gpg; then
+                    error "Gagal mengunduh/memproses GPG key NodeSource! Upgrade dibatalkan (Node.js lama tidak diubah)."
                     pause; return 1
                 fi
                 echo "deb [signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_${new_major}.x nodistro main" \

@@ -10,6 +10,14 @@ dan project ini memakai [Semantic Versioning](https://semver.org/lang/id/).
 ## [Unreleased]
 
 ### Fixed
+- **Node.js & PM2 Manager**: `install_nodejs()`/`update_nodejs()` menyimpan GPG
+  key NodeSource mentah (ASCII-armored) langsung sebagai file `.gpg` tanpa
+  di-`dearmor`, padahal `signed-by` di baris `deb [...]` mewajibkan format
+  binary — menyebabkan `apt-get update` gagal dengan
+  `NO_PUBKEY 2F59B5F99B1BE0B4` / `is not signed`. Diperbaiki dengan
+  `curl ... | sudo gpg --dearmor -o ...` (pola yang sama seperti dipakai di
+  MongoDB Manager), dan menambah `apt-get install -y curl gnupg` sebagai
+  jaring pengaman sebelum proses dearmor.
 - **Node.js & PM2 Manager**: pesan error di `install_nodejs()`/`install_pm2()`/
   `update_nodejs()` langsung hilang tertimpa layar menu berikutnya (`clear`)
   sebelum sempat terbaca — beberapa jalur gagal (`curl` GPG key, `apt-get

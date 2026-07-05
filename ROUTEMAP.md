@@ -55,7 +55,8 @@ setup-server  (Panel Terpadu)
 |     |     |-- 5. Reload konfigurasi
 |     |     |-- 6. Perbaiki masalah konfigurasi umum (keyFile & TLS)
 |     |     +-- 7. Kembali
-|     +-- 7. Keluar
+|     |-- 7. Hapus/Uninstall MongoDB       (package, config, repo APT; data opsional)
+|     +-- 8. Keluar
 |
 |-- 3. Node.js & PM2                        -> modules/nodejs-pm2.sh (nodejs_pm2_main)
 |     |-- 1. Install / Reinstall Node.js    (18 / 20 / 22)

@@ -569,6 +569,75 @@ MONGOCFG
 }
 
 # ============================================================
+# 1b. HAPUS / UNINSTALL MONGODB — untuk install ulang dari awal
+# ============================================================
+uninstall_mongodb() {
+  show_banner
+  echo -e "${BLD}  Hapus/Uninstall MongoDB${NC}"; line; echo
+
+  if ! command -v mongod &>/dev/null && [[ ! -f "$MONGOD_CONF" ]]; then
+    warn "MongoDB sepertinya belum terinstall di server ini."
+    pause; return
+  fi
+
+  warn "PERINGATAN: Ini akan menghapus service, package, config, dan repository APT"
+  warn "MongoDB secara permanen dari server ini."
+  echo
+  read -rp "  Hapus juga SELURUH DATA DATABASE di /var/lib/mongodb? [y/N]: " del_data
+  echo
+  read -rp "  Ketik 'HAPUS' untuk konfirmasi: " conf_word
+  if [[ "$conf_word" != "HAPUS" ]]; then
+    warn "Dibatalkan."
+    pause; return
+  fi
+
+  echo
+  info "Menghentikan & menonaktifkan service mongod..."
+  sudo systemctl stop mongod 2>/dev/null
+  sudo systemctl disable mongod 2>/dev/null
+
+  info "Menghapus package MongoDB..."
+  sudo apt-get purge -y 'mongodb-org*' 2>/dev/null
+  sudo apt-get autoremove -y 2>/dev/null
+  sudo apt-get autoclean 2>/dev/null
+
+  info "Menghapus repository & GPG key APT..."
+  sudo rm -f /etc/apt/sources.list.d/mongodb-org-*.list
+  sudo rm -f /usr/share/keyrings/mongodb-server-*.gpg
+
+  if [[ -f "$MONGOD_CONF" ]]; then
+    local BACKUP_CONF="${MONGOD_CONF}.removed.$(date +%Y%m%d%H%M%S)"
+    sudo cp "$MONGOD_CONF" "$BACKUP_CONF" 2>/dev/null
+    info "Config lama di-backup ke: $BACKUP_CONF"
+    sudo rm -f "$MONGOD_CONF"
+  fi
+
+  info "Menghapus keyFile & TLS PEM (jika ada)..."
+  sudo rm -f /var/lib/mongodb/keyfile
+  sudo rm -rf /etc/mongodb/tls
+
+  if [[ -f /etc/letsencrypt/renewal-hooks/deploy/mongodb-tls.sh ]]; then
+    sudo rm -f /etc/letsencrypt/renewal-hooks/deploy/mongodb-tls.sh
+    info "Renewal hook TLS MongoDB dihapus."
+  fi
+
+  if [[ "$del_data" =~ ^[Yy]$ ]]; then
+    warn "Menghapus seluruh data database di /var/lib/mongodb dan log..."
+    sudo rm -rf /var/lib/mongodb
+    sudo rm -rf /var/log/mongodb
+  else
+    info "Data database di /var/lib/mongodb dipertahankan (tidak dihapus)."
+  fi
+
+  sudo systemctl daemon-reload
+
+  echo; line
+  success "MongoDB berhasil dihapus dari server."
+  info "Jalankan menu '1. Setup MongoDB' untuk menginstal ulang dari awal."
+  line; pause
+}
+
+# ============================================================
 # 2. MANAGE USER — Submenu
 # ============================================================
 
@@ -1425,10 +1494,11 @@ main_menu() {
     echo "    4)  Backup database"
     echo "    5)  Restore database"
     echo "    6)  Service MongoDB  (status/start/stop/restart)"
-    echo "    7)  Keluar"
+    echo "    7)  Hapus/Uninstall MongoDB  (untuk install ulang)"
+    echo "    8)  Keluar"
     echo
     line
-    read -rp "  Pilihan [1-7]: " choice
+    read -rp "  Pilihan [1-8]: " choice
     case "$choice" in
       1) setup_mongodb ;;
       2) manage_user_menu ;;
@@ -1436,8 +1506,9 @@ main_menu() {
       4) backup_db ;;
       5) restore_db ;;
       6) service_menu ;;
-      7) echo; success "Sampai jumpa!"; echo; exit 0 ;;
-      *) warn "Pilihan tidak valid. Masukkan angka 1-7."; sleep 1 ;;
+      7) uninstall_mongodb ;;
+      8) echo; success "Sampai jumpa!"; echo; exit 0 ;;
+      *) warn "Pilihan tidak valid. Masukkan angka 1-8."; sleep 1 ;;
     esac
   done
 }

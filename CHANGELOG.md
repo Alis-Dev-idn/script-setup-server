@@ -49,6 +49,12 @@ dan project ini memakai [Semantic Versioning](https://semver.org/lang/id/).
   **dinonaktifkan otomatis** agar konfigurasi Nginx yang berjalan tetap valid.
 
 ### Added
+- **MongoDB Manager**: tambah menu utama "7. Hapus/Uninstall MongoDB" untuk
+  membersihkan instalasi (stop & disable service, purge package `mongodb-org*`,
+  hapus repository & GPG key APT, backup lalu hapus `/etc/mongod.conf`, hapus
+  keyFile & TLS PEM) sehingga bisa install ulang dari awal lewat "1. Setup
+  MongoDB". Menghapus data database (`/var/lib/mongodb`) bersifat opsional dan
+  digate konfirmasi ketik `HAPUS`.
 - **MongoDB Manager — Service**: tambah opsi "Perbaiki masalah konfigurasi umum
   (keyFile & TLS)" di menu Service MongoDB (nomor 6), untuk memperbaiki instalasi
   lama yang sudah terlanjur gagal start karena (a) kombinasi auth + replica set

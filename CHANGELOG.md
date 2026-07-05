@@ -42,6 +42,12 @@ dan project ini memakai [Semantic Versioning](https://semver.org/lang/id/).
   **dinonaktifkan otomatis** agar konfigurasi Nginx yang berjalan tetap valid.
 
 ### Added
+- **MongoDB Manager — Service**: tambah opsi "Perbaiki keyFile (auth + replica set)"
+  di menu Service MongoDB (nomor 6), untuk memperbaiki instalasi lama yang sudah
+  terlanjur gagal start karena kombinasi auth + replica set tanpa `security.keyFile`
+  (lihat entri Fixed di atas) — tanpa perlu mengulang seluruh wizard Setup MongoDB
+  (yang akan minta ulang password admin, dsb). Backup `/etc/mongod.conf` dibuat
+  otomatis sebelum diubah.
 - **MongoDB Manager — Setup**: tambah pengaturan cache memory WiredTiger (heap) saat
   instalasi. Mendeteksi total RAM server (`/proc/meminfo`) dan memberi rekomendasi
   otomatis mengikuti formula resmi MongoDB (`(RAM GB - 1) / 2`, minimum 0.25 GB), operator

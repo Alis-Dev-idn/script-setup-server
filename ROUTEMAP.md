@@ -53,7 +53,8 @@ setup-server  (Panel Terpadu)
 |     |     |-- 3. Stop
 |     |     |-- 4. Restart
 |     |     |-- 5. Reload konfigurasi
-|     |     +-- 6. Kembali
+|     |     |-- 6. Perbaiki keyFile (auth + replica set)
+|     |     +-- 7. Kembali
 |     +-- 7. Keluar
 |
 |-- 3. Node.js & PM2                        -> modules/nodejs-pm2.sh (nodejs_pm2_main)

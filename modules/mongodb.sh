@@ -1201,6 +1201,72 @@ restore_db() {
   pause
 }
 
+# ------------------------------------------------------------
+# Perbaiki keyFile untuk kombinasi auth + replica set.
+# MongoDB mewajibkan security.keyFile saat authorization: enabled dipakai
+# bersama replication.replSetName; instalasi lama (sebelum fix ini) tidak
+# membuatnya, sehingga mongod gagal start dengan:
+#   "security.keyFile is required when authorization is enabled with replica sets"
+# ------------------------------------------------------------
+_repair_mongo_keyfile() {
+  echo
+  if [[ ! -f "$MONGOD_CONF" ]]; then
+    error "File $MONGOD_CONF tidak ditemukan."
+    pause; return
+  fi
+
+  local has_auth="no" has_rs="no" has_keyfile="no"
+  grep -qE "^\s+authorization\s*:\s*enabled" "$MONGOD_CONF" 2>/dev/null && has_auth="yes"
+  grep -qE "^\s+replSetName\s*:" "$MONGOD_CONF" 2>/dev/null && has_rs="yes"
+  grep -qE "^\s+keyFile\s*:" "$MONGOD_CONF" 2>/dev/null && has_keyfile="yes"
+
+  if [[ "$has_auth" != "yes" || "$has_rs" != "yes" ]]; then
+    info "Kombinasi auth + replica set tidak terdeteksi di konfigurasi saat ini — keyFile tidak diperlukan."
+    pause; return
+  fi
+
+  if [[ "$has_keyfile" == "yes" ]]; then
+    info "keyFile sudah terpasang di konfigurasi."
+    read -rp "  Buat ulang keyFile baru (regenerate)? [y/N]: " regen
+    [[ ! "$regen" =~ ^[Yy]$ ]] && { pause; return; }
+  else
+    warn "keyFile belum ada padahal auth + replica set aktif — ini penyebab mongod gagal start."
+  fi
+
+  local KEYFILE_PATH
+  KEYFILE_PATH=$(grep -E "^\s+keyFile\s*:" "$MONGOD_CONF" 2>/dev/null \
+    | awk -F':' '{gsub(/[[:space:]]/, "", $2); print $2}' | head -1)
+  KEYFILE_PATH="${KEYFILE_PATH:-/var/lib/mongodb/keyfile}"
+
+  local BACKUP_CONF="$MONGOD_CONF.bak.$(date +%Y%m%d%H%M%S)"
+  sudo cp "$MONGOD_CONF" "$BACKUP_CONF"
+  info "Backup konfigurasi: $BACKUP_CONF"
+
+  info "Membuat keyFile di $KEYFILE_PATH..."
+  sudo openssl rand -base64 756 | sudo tee "$KEYFILE_PATH" > /dev/null
+  sudo chmod 400 "$KEYFILE_PATH"
+  sudo chown mongodb:mongodb "$KEYFILE_PATH"
+
+  if [[ "$has_keyfile" != "yes" ]]; then
+    sudo sed -i "/^\s*authorization\s*:\s*enabled/a\\  keyFile: ${KEYFILE_PATH}" "$MONGOD_CONF"
+  fi
+
+  info "Merestart mongod..."
+  sudo systemctl restart mongod
+  sleep 2
+
+  if systemctl is-active --quiet mongod; then
+    success "MongoDB berhasil direstart dengan keyFile aktif."
+  else
+    error "MongoDB masih gagal start. Log terbaru:"
+    echo
+    sudo systemctl status mongod --no-pager -l | tail -n 15
+    echo
+    warn "Konfigurasi sebelumnya di-backup ke: $BACKUP_CONF"
+  fi
+  pause
+}
+
 # ============================================================
 # 6. SERVICE MONGODB — Status, Start, Stop, Restart
 # ============================================================
@@ -1249,10 +1315,11 @@ service_menu() {
     echo "    3)  Stop"
     echo "    4)  Restart"
     echo "    5)  Reload konfigurasi (tanpa restart)"
-    echo "    6)  Kembali ke menu utama"
+    echo "    6)  Perbaiki keyFile (auth + replica set)"
+    echo "    7)  Kembali ke menu utama"
     echo
     line
-    read -rp "  Pilihan [1-6]: " svc_choice
+    read -rp "  Pilihan [1-7]: " svc_choice
 
     case "$svc_choice" in
       1)
@@ -1305,7 +1372,8 @@ service_menu() {
           || error "Gagal reload — cek log untuk detail."
         sleep 1
         ;;
-      6) return ;;
+      6) _repair_mongo_keyfile ;;
+      7) return ;;
       *) warn "Pilihan tidak valid."; sleep 1 ;;
     esac
   done

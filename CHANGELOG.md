@@ -10,6 +10,14 @@ dan project ini memakai [Semantic Versioning](https://semver.org/lang/id/).
 ## [Unreleased]
 
 ### Fixed
+- **Node.js & PM2 Manager**: pesan error di `install_nodejs()`/`install_pm2()`/
+  `update_nodejs()` langsung hilang tertimpa layar menu berikutnya (`clear`)
+  sebelum sempat terbaca — beberapa jalur gagal (`curl` GPG key, `apt-get
+  update/install`, `npm install -g`) tidak memanggil `pause` sebelum `return`.
+  Ditambahkan `pause` di semua jalur tersebut. Output `apt-get`/`curl`/`npm`
+  yang tadinya dibuang ke `/dev/null` juga tidak lagi disembunyikan pada
+  langkah-langkah kritikal ini, supaya pesan error asli (bukan cuma pesan
+  generik "Gagal ...") ikut tampil untuk membantu diagnosis.
 - **Node.js & PM2 Manager**: fungsi `show_banner()` di `modules/nodejs-pm2.sh`
   memakai nama yang sama persis dengan `show_banner()` di `modules/mongodb.sh`.
   Karena `setup-server.sh` men-`source` semua modul ke satu proses shell yang

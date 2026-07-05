@@ -201,9 +201,9 @@ install_nodejs() {
     # Import GPG key
     sudo mkdir -p /etc/apt/keyrings
     if ! sudo curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key \
-         -o /etc/apt/keyrings/nodesource.gpg 2>/dev/null; then
+         -o /etc/apt/keyrings/nodesource.gpg; then
         error "Gagal mengunduh GPG key NodeSource! Instalasi dibatalkan (Node.js lama tidak diubah)."
-        return 1
+        pause; return 1
     fi
 
     # Tambahkan repository
@@ -211,9 +211,9 @@ install_nodejs() {
         | sudo tee /etc/apt/sources.list.d/nodesource.list > /dev/null
 
     info "Menjalankan apt-get update..."
-    if ! sudo apt-get update -y 2>/dev/null; then
+    if ! sudo apt-get update -y; then
         error "Gagal melakukan apt-get update! Instalasi dibatalkan (Node.js lama tidak diubah)."
-        return 1
+        pause; return 1
     fi
 
     # ---------- Hapus instalasi nvm lama (jika ada) ----------
@@ -232,9 +232,9 @@ install_nodejs() {
     fi
 
     info "Menginstall Node.js v${NODEJS_MAJOR}..."
-    if ! sudo apt-get install -y --allow-downgrades nodejs 2>/dev/null; then
+    if ! sudo apt-get install -y --allow-downgrades nodejs; then
         error "Gagal menginstall Node.js!"
-        return 1
+        pause; return 1
     fi
 
     # ---------- Verifikasi ----------
@@ -248,7 +248,7 @@ install_nodejs() {
         echo -e "  npm     : ${GREEN}${npm_ver}${NC}"
     else
         error "Instalasi gagal! Node.js tidak ditemukan."
-        return 1
+        pause; return 1
     fi
 
     # Simpan konfigurasi
@@ -305,9 +305,9 @@ install_pm2() {
     echo ""
     info "Menginstall PM2 secara global..."
 
-    if ! sudo npm install -g pm2 2>/dev/null; then
+    if ! sudo npm install -g pm2; then
         error "Gagal menginstall PM2!"
-        return 1
+        pause; return 1
     fi
 
     # ---------- Setup Startup Hook ----------
@@ -330,7 +330,7 @@ install_pm2() {
         echo -e "  pm2 list                        ${CYAN}# Lihat semua aplikasi${NC}"
     else
         error "Instalasi PM2 gagal!"
-        return 1
+        pause; return 1
     fi
 
     save_conf
@@ -373,11 +373,11 @@ update_nodejs() {
         1)
             echo ""
             info "Mengupdate Node.js v${current_major}.x ke versi terbaru..."
-            if ! sudo apt-get update -y 2>/dev/null; then
+            if ! sudo apt-get update -y; then
                 error "Gagal apt-get update! Update dibatalkan."
                 pause; return 1
             fi
-            if ! sudo apt-get install -y --only-upgrade nodejs 2>/dev/null; then
+            if ! sudo apt-get install -y --only-upgrade nodejs; then
                 error "Gagal mengupdate Node.js!"
                 pause; return 1
             fi
@@ -401,11 +401,11 @@ update_nodejs() {
 
             if [[ "$new_major" -eq "$current_major" ]]; then
                 warn "Sudah menggunakan Node.js v${current_major}. Update minor..."
-                if ! sudo apt-get update -y 2>/dev/null; then
+                if ! sudo apt-get update -y; then
                     error "Gagal apt-get update! Update dibatalkan."
                     pause; return 1
                 fi
-                if ! sudo apt-get install -y --only-upgrade nodejs 2>/dev/null; then
+                if ! sudo apt-get install -y --only-upgrade nodejs; then
                     error "Gagal mengupdate Node.js!"
                     pause; return 1
                 fi
@@ -417,17 +417,17 @@ update_nodejs() {
                 sudo rm -f /etc/apt/sources.list.d/nodesource.list 2>/dev/null
                 sudo mkdir -p /etc/apt/keyrings
                 if ! sudo curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key \
-                    -o /etc/apt/keyrings/nodesource.gpg 2>/dev/null; then
+                    -o /etc/apt/keyrings/nodesource.gpg; then
                     error "Gagal mengunduh GPG key NodeSource! Upgrade dibatalkan (Node.js lama tidak diubah)."
                     pause; return 1
                 fi
                 echo "deb [signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_${new_major}.x nodistro main" \
                     | sudo tee /etc/apt/sources.list.d/nodesource.list > /dev/null
-                if ! sudo apt-get update -y 2>/dev/null; then
+                if ! sudo apt-get update -y; then
                     error "Gagal apt-get update! Upgrade dibatalkan (Node.js lama tidak diubah)."
                     pause; return 1
                 fi
-                if ! sudo apt-get install -y --allow-downgrades nodejs 2>/dev/null; then
+                if ! sudo apt-get install -y --allow-downgrades nodejs; then
                     error "Gagal menginstall Node.js v${new_major}!"
                     pause; return 1
                 fi
@@ -470,7 +470,7 @@ update_nodejs() {
         fi
     else
         error "Update gagal! Node.js tidak ditemukan."
-        return 1
+        pause; return 1
     fi
 
     echo ""
@@ -511,7 +511,7 @@ update_pm2() {
             echo ""
             info "Mengupdate PM2..."
             confirm "Update PM2 dari npm?" || return
-            if ! sudo npm install -g pm2@latest 2>/dev/null; then
+            if ! sudo npm install -g pm2@latest; then
                 error "Gagal mengupdate PM2!"
                 pause; return 1
             fi

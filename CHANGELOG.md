@@ -10,6 +10,15 @@ dan project ini memakai [Semantic Versioning](https://semver.org/lang/id/).
 ## [Unreleased]
 
 ### Fixed
+- **MongoDB Manager — Setup**: `setup_mongodb()` gagal start mongod saat auth +
+  replica set diaktifkan bersamaan — MongoDB mewajibkan `security.keyFile` bila
+  `authorization: enabled` dipakai bersama `replication.replSetName`
+  (`BadValue: security.keyFile is required when authorization is enabled with
+  replica sets`), tapi skrip tidak pernah membuatnya. Kini keyFile dibuat otomatis
+  (`openssl rand -base64 756`, `/var/lib/mongodb/keyfile`, `chmod 400`) untuk
+  kombinasi tersebut. Skrip juga sekarang memverifikasi `mongod` benar-benar
+  `active` sebelum menampilkan banner "Berhasil Diinstal!" — sebelumnya banner
+  sukses tetap tampil walau service gagal start.
 - **MongoDB Manager — Restore**: `restore_db()` salah membangun path source
   `mongorestore` dari nama database **tujuan** yang diketik user, bukan nama
   database **asli** di dalam backup — menyebabkan `mongorestore target ... invalid:

@@ -341,6 +341,7 @@ HOOK
   echo "    Cache(heap) : ${MONGO_CACHE_GB} GB"
   if [[ -n "$MONGO_REPLSET" ]]; then
     echo "    Replica Set : $MONGO_REPLSET (transactions diaktifkan)"
+    [[ "$MONGO_AUTH" == "yes" ]] && echo "    Key File    : akan dibuat otomatis (wajib untuk auth + replica set)"
   else
     echo "    Replica Set : tidak (standalone)"
   fi
@@ -373,9 +374,25 @@ https://repo.mongodb.org/apt/ubuntu ${CODENAME}/mongodb-org/${MONGO_VER}.0 multi
   sudo apt-get update -y
   sudo apt-get install -y mongodb-org
 
+  # -- keyFile untuk autentikasi internal replica set --
+  # Wajib bila authorization diaktifkan bersamaan dengan replication.replSetName,
+  # jika tidak mongod akan gagal start: "security.keyFile is required when
+  # authorization is enabled with replica sets".
+  local MONGO_KEYFILE=""
+  if [[ "$MONGO_AUTH" == "yes" && -n "$MONGO_REPLSET" ]]; then
+    info "Membuat keyFile untuk autentikasi internal replica set..."
+    MONGO_KEYFILE="/var/lib/mongodb/keyfile"
+    sudo openssl rand -base64 756 | sudo tee "$MONGO_KEYFILE" > /dev/null
+    sudo chmod 400 "$MONGO_KEYFILE"
+    sudo chown mongodb:mongodb "$MONGO_KEYFILE"
+  fi
+
   info "Menulis konfigurasi /etc/mongod.conf..."
   local AUTH_SECTION=""
-  [[ "$MONGO_AUTH" == "yes" ]] && AUTH_SECTION=$'\nsecurity:\n  authorization: enabled'
+  if [[ "$MONGO_AUTH" == "yes" ]]; then
+    AUTH_SECTION=$'\nsecurity:\n  authorization: enabled'
+    [[ -n "$MONGO_KEYFILE" ]] && AUTH_SECTION+=$'\n  keyFile: '"$MONGO_KEYFILE"
+  fi
   local RS_SECTION=""
   [[ -n "$MONGO_REPLSET" ]] && RS_SECTION=$'\nreplication:\n  replSetName: '"$MONGO_REPLSET"$''
   local TLS_SECTION=""
@@ -453,6 +470,18 @@ MONGOCFG
     success "Replica set '$MONGO_REPLSET' berhasil diinisialisasi."
   fi
 
+  # -- Verifikasi mongod benar-benar berjalan sebelum melapor sukses --
+  if ! systemctl is-active --quiet mongod; then
+    echo; line
+    error "MongoDB GAGAL berjalan setelah konfigurasi diterapkan!"
+    echo
+    sudo systemctl status mongod --no-pager -l | tail -n 15
+    echo
+    warn "Periksa error di atas (atau 'journalctl -u mongod -n 50') dan perbaiki /etc/mongod.conf,"
+    warn "lalu jalankan 'systemctl restart mongod' secara manual."
+    line; pause; return
+  fi
+
   if [[ "$MONGO_BIND" == "0.0.0.0" ]]; then
     command -v ufw &>/dev/null && { info "Membuka port $MONGO_PORT di UFW..."; sudo ufw allow "$MONGO_PORT"/tcp; }
   fi
@@ -498,6 +527,7 @@ MONGOCFG
   fi
   if [[ -n "$MONGO_REPLSET" ]]; then
     echo "    Replica Set : $MONGO_REPLSET  ✓ (transactions & session aktif)"
+    [[ -n "$MONGO_KEYFILE" ]] && echo "    Key File    : $MONGO_KEYFILE"
   else
     echo "    Replica Set : tidak (standalone)"
   fi

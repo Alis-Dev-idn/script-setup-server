@@ -10,6 +10,33 @@ dan project ini memakai [Semantic Versioning](https://semver.org/lang/id/).
 ## [Unreleased]
 
 ### Fixed
+- **Node.js & PM2 Manager**: fungsi `show_banner()` di `modules/nodejs-pm2.sh`
+  memakai nama yang sama persis dengan `show_banner()` di `modules/mongodb.sh`.
+  Karena `setup-server.sh` men-`source` semua modul ke satu proses shell yang
+  sama, definisi yang di-source belakangan (nodejs-pm2.sh) menimpa punya
+  MongoDB Manager — akibatnya menu **MongoDB Manager** menampilkan banner
+  "Node.js & PM2 Manager" yang salah saat diakses lewat panel terpadu. Fungsi
+  di `nodejs-pm2.sh` di-rename jadi `_nodejs_show_banner()` agar tidak bentrok.
+- **Node.js & PM2 Manager**: beberapa langkah (`apt-get update/install`, `curl`
+  GPG key, `npm install -g`, `pm2 restart/reload all`) tidak pernah mengecek
+  exit code sebelum melaporkan sukses — mengikuti pola bug yang sama seperti
+  di MongoDB Manager (restore/setup). Kini setiap langkah kritikal di
+  `install_nodejs()`, `update_nodejs()`, dan `update_pm2()` diverifikasi; upgrade
+  major version Node.js juga memverifikasi versi yang benar-benar terpasang
+  sebelum melaporkan "berhasil diupdate".
+- **Node.js & PM2 Manager**: `install_nodejs()` menghapus (purge) Node.js lama
+  **sebelum** memverifikasi repository/GPG key NodeSource yang baru berhasil
+  disiapkan — kalau download GPG key atau `apt-get update` gagal di tengah
+  jalan, server bisa berakhir tanpa Node.js sama sekali. Urutan dibalik:
+  repo & `apt-get update` divalidasi dulu, baru paket lama diganti (biarkan
+  `apt-get install --allow-downgrades` yang menangani upgrade/downgrade in-place).
+  Deteksi instalasi via **nvm** juga diperbaiki (`nvm` adalah shell function,
+  bukan binary, sehingga `command -v nvm` tidak pernah terdeteksi — kini dicek
+  lewat keberadaan file `~/.nvm/nvm.sh`).
+- **Node.js & PM2 Manager**: `install_pm2()` tidak memverifikasi ulang bahwa
+  Node.js benar-benar berhasil terinstall setelah menawarkan instalasi otomatis
+  — kalau gagal, langkah selanjutnya tetap jalan dan memunculkan error
+  "command not found" yang membingungkan alih-alih pesan yang jelas.
 - **MongoDB Manager — Setup TLS**: `setup_mongodb()` menulis `mode: requireTLS`
   tanpa `CAFile` ketika operator tidak mengisi path CA — MongoDB modern menolak
   start dengan `InvalidOptions: The use of TLS without specifying a chain of trust

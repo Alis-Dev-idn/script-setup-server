@@ -87,7 +87,7 @@ get_available_lts_versions() {
 #  MENU
 # ============================================================
 
-show_banner() {
+_nodejs_show_banner() {
     clear
     echo -e "${BLD}${BLU}"
     echo "  ╔══════════════════════════════════════════╗"
@@ -117,7 +117,7 @@ show_status_summary() {
 }
 
 show_menu() {
-    show_banner
+    _nodejs_show_banner
     show_status_summary
     echo -e "${CYAN}════════════════════════════════════════════${NC}"
     echo " 1. Install / Reinstall Node.js"
@@ -181,25 +181,17 @@ install_nodejs() {
     echo ""
     info "Memulai installasi Node.js v${NODEJS_MAJOR}..."
 
-    # ---------- Hapus versi lama (jika ada) ----------
+    # Simpan versi lama untuk keperluan uninstall nvm (jika dipakai) & perbandingan.
+    # Package apt "nodejs" lama TIDAK dihapus manual di sini — biarkan
+    # 'apt-get install' di bawah yang mengganti/upgrade/downgrade paketnya,
+    # supaya kalau repo/GPG key baru gagal disiapkan, instalasi lama yang
+    # masih berjalan tidak ikut hilang.
+    local old_ver=""
     if cmd_exists node; then
-        local old_ver
         old_ver="$(get_installed_node_version)"
-        warn "Node.js v$old_ver terinstall, menghapus..."
-        if cmd_exists nvm; then
-            # Jika pakai nvm
-            export NVM_DIR="$HOME/.nvm"
-            # shellcheck source=/dev/null
-            [ -s "$NVM_DIR/nvm.sh" ] && source "$NVM_DIR/nvm.sh"
-            nvm uninstall "$old_ver" 2>/dev/null
-        else
-            # Hapus via NodeSource
-            sudo apt-get purge -y nodejs 2>/dev/null
-        fi
-        success "Versi lama dihapus"
     fi
 
-    # ---------- Install via NodeSource ----------
+    # ---------- Siapkan repository NodeSource ----------
     info "Menambahkan NodeSource repository untuk Node.js v${NODEJS_MAJOR}..."
 
     # Hapus repo lama
@@ -210,7 +202,7 @@ install_nodejs() {
     sudo mkdir -p /etc/apt/keyrings
     if ! sudo curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key \
          -o /etc/apt/keyrings/nodesource.gpg 2>/dev/null; then
-        error "Gagal mengunduh GPG key NodeSource!"
+        error "Gagal mengunduh GPG key NodeSource! Instalasi dibatalkan (Node.js lama tidak diubah)."
         return 1
     fi
 
@@ -218,15 +210,29 @@ install_nodejs() {
     echo "deb [signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_${NODEJS_MAJOR}.x nodistro main" \
         | sudo tee /etc/apt/sources.list.d/nodesource.list > /dev/null
 
-    # Install
     info "Menjalankan apt-get update..."
     if ! sudo apt-get update -y 2>/dev/null; then
-        error "Gagal melakukan apt-get update!"
+        error "Gagal melakukan apt-get update! Instalasi dibatalkan (Node.js lama tidak diubah)."
         return 1
     fi
 
+    # ---------- Hapus instalasi nvm lama (jika ada) ----------
+    # Node.js via nvm tidak dikelola apt, jadi tidak akan tergantikan otomatis
+    # oleh 'apt-get install nodejs' di bawah — harus dihapus manual dulu agar
+    # tidak bentrok/menutupi binary baru di PATH. 'nvm' adalah shell function
+    # (bukan binary), jadi cek keberadaannya lewat file nvm.sh, bukan cmd_exists.
+    local NVM_DIR="$HOME/.nvm"
+    if [[ -n "$old_ver" && -s "$NVM_DIR/nvm.sh" ]]; then
+        warn "Node.js v$old_ver terinstall via nvm, menghapus..."
+        export NVM_DIR
+        # shellcheck source=/dev/null
+        source "$NVM_DIR/nvm.sh"
+        nvm uninstall "$old_ver" 2>/dev/null
+        success "Versi lama (nvm) dihapus"
+    fi
+
     info "Menginstall Node.js v${NODEJS_MAJOR}..."
-    if ! sudo apt-get install -y nodejs 2>/dev/null; then
+    if ! sudo apt-get install -y --allow-downgrades nodejs 2>/dev/null; then
         error "Gagal menginstall Node.js!"
         return 1
     fi
@@ -272,6 +278,12 @@ install_pm2() {
             install_nodejs
         else
             error "Node.js dibutuhkan untuk PM2. Batal."
+            pause
+            return 1
+        fi
+
+        if ! cmd_exists node; then
+            error "Node.js masih belum terinstall. PM2 dibatalkan."
             pause
             return 1
         fi
@@ -361,8 +373,14 @@ update_nodejs() {
         1)
             echo ""
             info "Mengupdate Node.js v${current_major}.x ke versi terbaru..."
-            sudo apt-get update -y 2>/dev/null
-            sudo apt-get install -y --only-upgrade nodejs 2>/dev/null
+            if ! sudo apt-get update -y 2>/dev/null; then
+                error "Gagal apt-get update! Update dibatalkan."
+                pause; return 1
+            fi
+            if ! sudo apt-get install -y --only-upgrade nodejs 2>/dev/null; then
+                error "Gagal mengupdate Node.js!"
+                pause; return 1
+            fi
             ;;
         2)
             echo ""
@@ -383,8 +401,14 @@ update_nodejs() {
 
             if [[ "$new_major" -eq "$current_major" ]]; then
                 warn "Sudah menggunakan Node.js v${current_major}. Update minor..."
-                sudo apt-get update -y 2>/dev/null
-                sudo apt-get install -y --only-upgrade nodejs 2>/dev/null
+                if ! sudo apt-get update -y 2>/dev/null; then
+                    error "Gagal apt-get update! Update dibatalkan."
+                    pause; return 1
+                fi
+                if ! sudo apt-get install -y --only-upgrade nodejs 2>/dev/null; then
+                    error "Gagal mengupdate Node.js!"
+                    pause; return 1
+                fi
             else
                 info "Mengupgrade dari Node.js v${current_major} ke v${new_major}..."
                 confirm "Lanjutkan upgrade? (Node.js akan diganti)" || return
@@ -392,12 +416,28 @@ update_nodejs() {
                 # Ganti repo NodeSource
                 sudo rm -f /etc/apt/sources.list.d/nodesource.list 2>/dev/null
                 sudo mkdir -p /etc/apt/keyrings
-                sudo curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key \
-                    -o /etc/apt/keyrings/nodesource.gpg 2>/dev/null
+                if ! sudo curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key \
+                    -o /etc/apt/keyrings/nodesource.gpg 2>/dev/null; then
+                    error "Gagal mengunduh GPG key NodeSource! Upgrade dibatalkan (Node.js lama tidak diubah)."
+                    pause; return 1
+                fi
                 echo "deb [signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_${new_major}.x nodistro main" \
                     | sudo tee /etc/apt/sources.list.d/nodesource.list > /dev/null
-                sudo apt-get update -y 2>/dev/null
-                sudo apt-get install -y --allow-downgrades nodejs 2>/dev/null
+                if ! sudo apt-get update -y 2>/dev/null; then
+                    error "Gagal apt-get update! Upgrade dibatalkan (Node.js lama tidak diubah)."
+                    pause; return 1
+                fi
+                if ! sudo apt-get install -y --allow-downgrades nodejs 2>/dev/null; then
+                    error "Gagal menginstall Node.js v${new_major}!"
+                    pause; return 1
+                fi
+
+                local actual_major
+                actual_major="$(get_installed_node_major)"
+                if [[ "$actual_major" != "$new_major" ]]; then
+                    error "Instalasi selesai tapi versi masih v${actual_major} (bukan v${new_major}). Periksa log apt di atas."
+                    pause; return 1
+                fi
                 NODEJS_MAJOR="$new_major"
                 save_conf
             fi
@@ -423,8 +463,11 @@ update_nodejs() {
 
         # Update npm juga
         info "Mengupdate npm..."
-        sudo npm install -g npm@latest 2>/dev/null
-        echo -e "  npm     : ${GREEN}$(npm --version)${NC}"
+        if sudo npm install -g npm@latest 2>/dev/null; then
+            echo -e "  npm     : ${GREEN}$(npm --version)${NC}"
+        else
+            warn "Gagal mengupdate npm (Node.js tetap berhasil diupdate)."
+        fi
     else
         error "Update gagal! Node.js tidak ditemukan."
         return 1
@@ -468,7 +511,10 @@ update_pm2() {
             echo ""
             info "Mengupdate PM2..."
             confirm "Update PM2 dari npm?" || return
-            sudo npm install -g pm2@latest 2>/dev/null
+            if ! sudo npm install -g pm2@latest 2>/dev/null; then
+                error "Gagal mengupdate PM2!"
+                pause; return 1
+            fi
             local new_ver
             new_ver="$(get_installed_pm2_version)"
             echo ""
@@ -478,8 +524,11 @@ update_pm2() {
 
             # Update modules PM2 juga
             info "Mengupdate PM2 modules..."
-            pm2 update 2>/dev/null
-            success "PM2 modules diupdate"
+            if pm2 update 2>/dev/null; then
+                success "PM2 modules diupdate"
+            else
+                warn "Gagal mengupdate PM2 modules (PM2 itu sendiri tetap berhasil diupdate)."
+            fi
             ;;
         2)
             echo ""
@@ -490,8 +539,12 @@ update_pm2() {
             fi
             info "Restart semua aplikasi PM2..."
             confirm "Restart semua?" || return
-            pm2 restart all 2>/dev/null
-            success "Semua aplikasi direstart!"
+            if pm2 restart all 2>/dev/null; then
+                success "Semua aplikasi direstart!"
+            else
+                error "Gagal merestart sebagian/semua aplikasi — cek 'pm2 list' untuk detail."
+                pause; return 1
+            fi
             ;;
         3)
             echo ""
@@ -502,8 +555,12 @@ update_pm2() {
             fi
             info "Reload semua aplikasi (zero-downtime)..."
             confirm "Reload semua?" || return
-            pm2 reload all 2>/dev/null
-            success "Semua aplikasi direload (zero-downtime)!"
+            if pm2 reload all 2>/dev/null; then
+                success "Semua aplikasi direload (zero-downtime)!"
+            else
+                error "Gagal me-reload sebagian/semua aplikasi — cek 'pm2 list' untuk detail."
+                pause; return 1
+            fi
             ;;
         4|"")
             return

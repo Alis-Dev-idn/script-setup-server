@@ -33,6 +33,13 @@ dan project ini memakai [Semantic Versioning](https://semver.org/lang/id/).
   **dinonaktifkan otomatis** agar konfigurasi Nginx yang berjalan tetap valid.
 
 ### Added
+- **MongoDB Manager — Setup**: tambah pengaturan cache memory WiredTiger (heap) saat
+  instalasi. Mendeteksi total RAM server (`/proc/meminfo`) dan memberi rekomendasi
+  otomatis mengikuti formula resmi MongoDB (`(RAM GB - 1) / 2`, minimum 0.25 GB), operator
+  bisa menerima rekomendasi atau input ukuran sendiri. Nilai ditulis ke
+  `storage.wiredTiger.engineConfig.cacheSizeGB` di `/etc/mongod.conf` dan ditampilkan di
+  ringkasan sebelum instalasi, ringkasan hasil instalasi, serta status di menu
+  **Service MongoDB**.
 - **MongoDB Manager — Backup & Restore**: kini menampilkan preview isi data sebelum
   eksekusi. Backup menampilkan daftar collection dari database yang dipilih (via
   `listCollections`); restore mendeteksi struktur backup (`.tar.gz` atau direktori) dan

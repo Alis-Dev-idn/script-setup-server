@@ -29,7 +29,8 @@ setup-server  (Panel Terpadu)
 |
 |-- 2. MongoDB Manager                     -> modules/mongodb.sh (mongodb_main)
 |     |   (config dibaca dari /etc/mongod.conf; kredensial admin diinput per sesi)
-|     |-- 1. Setup MongoDB                  (versi, port, auth, bind, replica set, TLS/SSL)
+|     |-- 1. Setup MongoDB                  (versi, port, auth, bind, cache/heap WiredTiger,
+|     |                                       replica set, TLS/SSL)
 |     |-- 2. Manage User
 |     |     |-- 1. Buat user baru
 |     |     |-- 2. Update user (password & role)

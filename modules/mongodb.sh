@@ -196,6 +196,31 @@ setup_mongodb() {
     BIND_IP="127.0.0.1"
   fi
 
+  # -- Cache memory WiredTiger (heap) --
+  echo
+  local TOTAL_RAM_KB TOTAL_RAM_GB RECOMMENDED_CACHE_GB="1"
+  TOTAL_RAM_KB=$(awk '/^MemTotal:/{print $2}' /proc/meminfo 2>/dev/null)
+  if [[ -n "$TOTAL_RAM_KB" && "$TOTAL_RAM_KB" -gt 0 ]]; then
+    TOTAL_RAM_GB=$(awk -v kb="$TOTAL_RAM_KB" 'BEGIN{printf "%.1f", kb/1024/1024}')
+    RECOMMENDED_CACHE_GB=$(awk -v kb="$TOTAL_RAM_KB" 'BEGIN {
+      gb = kb / 1024 / 1024
+      rec = (gb - 1) / 2
+      if (rec < 0.25) rec = 0.25
+      printf "%.2f", rec
+    }')
+    info "RAM server terdeteksi: ${TOTAL_RAM_GB} GB"
+    info "Rekomendasi cache WiredTiger (formula resmi MongoDB, (RAM GB - 1) / 2): ${RECOMMENDED_CACHE_GB} GB"
+  else
+    warn "Tidak dapat mendeteksi total RAM server, memakai default ${RECOMMENDED_CACHE_GB} GB."
+  fi
+  read -rp "  Cache size WiredTiger dalam GB [${RECOMMENDED_CACHE_GB}]: " input_cache
+  MONGO_CACHE_GB="${input_cache:-$RECOMMENDED_CACHE_GB}"
+  if ! [[ "$MONGO_CACHE_GB" =~ ^[0-9]+([.][0-9]+)?$ ]] || \
+     [[ "$(awk -v v="$MONGO_CACHE_GB" 'BEGIN{print (v<=0)?"1":"0"}')" == "1" ]]; then
+    warn "Input tidak valid, memakai rekomendasi ${RECOMMENDED_CACHE_GB} GB."
+    MONGO_CACHE_GB="$RECOMMENDED_CACHE_GB"
+  fi
+
   # -- Replica Set (dibutuhkan untuk transactions / session rollback) --
   echo
   ask "Aktifkan Replica Set? (diperlukan untuk transactions & session rollback)"
@@ -313,6 +338,7 @@ HOOK
   echo "    Auth        : $MONGO_AUTH"
   [[ "$MONGO_AUTH" == "yes" ]] && echo "    User        : $MONGO_ADMIN_USER"
   echo "    Bind IP     : $MONGO_BIND (koneksi via 127.0.0.1)"
+  echo "    Cache(heap) : ${MONGO_CACHE_GB} GB"
   if [[ -n "$MONGO_REPLSET" ]]; then
     echo "    Replica Set : $MONGO_REPLSET (transactions diaktifkan)"
   else
@@ -366,6 +392,9 @@ systemLog:
 
 storage:
   dbPath: /var/lib/mongodb
+  wiredTiger:
+    engineConfig:
+      cacheSizeGB: ${MONGO_CACHE_GB}
 
 processManagement:
   timeZoneInfo: /usr/share/zoneinfo
@@ -460,6 +489,7 @@ MONGOCFG
   echo "    Versi       : MongoDB ${MONGO_VER}.x"
   echo "    Port        : $MONGO_PORT"
   echo "    Bind IP     : $MONGO_BIND"
+  echo "    Cache(heap) : ${MONGO_CACHE_GB} GB"
   if [[ "$MONGO_AUTH" == "yes" ]]; then
     echo "    Auth        : aktif"
     echo "    Admin user  : $MONGO_ADMIN_USER"
@@ -1168,14 +1198,16 @@ service_menu() {
     [[ -n "$SVC_PID"   && "$SVC_PID"   != "0"   ]] && echo "  PID       : $SVC_PID"
 
     if [[ -f "$MONGOD_CONF" ]]; then
-      local ACTUAL_PORT ACTUAL_BIND ACTUAL_RS
+      local ACTUAL_PORT ACTUAL_BIND ACTUAL_RS ACTUAL_CACHE
       ACTUAL_PORT=$(parse_mongod_conf "port");   ACTUAL_PORT="${ACTUAL_PORT:-27017}"
       ACTUAL_BIND=$(parse_mongod_conf "bindIp"); ACTUAL_BIND="${ACTUAL_BIND:-127.0.0.1}"
       ACTUAL_RS=$(grep -E "^\s+replSetName\s*:" "$MONGOD_CONF" 2>/dev/null \
         | awk -F':' '{gsub(/[[:space:]]/, "", $2); print $2}')
+      ACTUAL_CACHE=$(parse_mongod_conf "cacheSizeGB")
       echo    "  Port      : $ACTUAL_PORT"
       echo    "  Bind IP   : $ACTUAL_BIND"
       [[ -n "$ACTUAL_RS" ]] && echo "  ReplicaSet: $ACTUAL_RS"
+      [[ -n "$ACTUAL_CACHE" ]] && echo "  Cache(GB) : $ACTUAL_CACHE"
     fi
 
     echo

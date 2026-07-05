@@ -956,6 +956,20 @@ backup_db() {
   read -rp "  Direktori tujuan backup [/tmp/mongo_backup]: " BKP_DIR
   BKP_DIR="${BKP_DIR:-/tmp/mongo_backup}"
 
+  echo
+  if [[ -n "$BKP_DB" ]]; then
+    info "Collections yang akan di-backup dari '$BKP_DB':"
+    mongo_exec "
+      db = db.getSiblingDB('$BKP_DB');
+      var cols = db.getCollectionInfos();
+      if (cols.length === 0) { print('    (belum ada collection)'); }
+      cols.forEach(function(c) { print('    - ' + c.name); });
+    " admin
+  else
+    info "Akan membackup SEMUA database (lihat daftar di atas)."
+  fi
+  echo
+
   local TIMESTAMP; TIMESTAMP=$(date +%Y%m%d_%H%M%S)
   local OUT_DIR="${BKP_DIR}/${TIMESTAMP}"
   mkdir -p "$OUT_DIR"
@@ -985,6 +999,50 @@ backup_db() {
 }
 
 # ============================================================
+# Helper — Deteksi struktur direktori dump & tampilkan preview isi
+# Mengisi variabel (dibaca oleh restore_db()):
+#   _DB_DIRS   : array nama folder per-database yang terdeteksi
+#   _FLAT_MODE : "yes" bila dir ini sendiri berisi *.bson langsung (1 db, tanpa subfolder)
+# Return 1 bila tidak ditemukan struktur dump yang valid.
+# ============================================================
+_inspect_backup_dir() {
+  local dir="$1"
+  _DB_DIRS=()
+  _FLAT_MODE="no"
+
+  local sub
+  while IFS= read -r sub; do
+    _DB_DIRS+=("$(basename "$sub")")
+  done < <(find "$dir" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | sort)
+
+  if [[ ${#_DB_DIRS[@]} -gt 0 ]]; then
+    info "Isi backup terdeteksi (${#_DB_DIRS[@]} database):"
+    local db_name col
+    for db_name in "${_DB_DIRS[@]}"; do
+      echo "    - $db_name"
+      while IFS= read -r col; do
+        echo "        - $(basename "$col" .bson)"
+      done < <(find "$dir/$db_name" -maxdepth 1 -name '*.bson' 2>/dev/null | sort)
+    done
+    return 0
+  fi
+
+  local has_bson
+  has_bson=$(find "$dir" -maxdepth 1 -name '*.bson' 2>/dev/null | head -1)
+  if [[ -n "$has_bson" ]]; then
+    _FLAT_MODE="yes"
+    info "Isi backup terdeteksi (1 database, tanpa subfolder):"
+    local col
+    while IFS= read -r col; do
+      echo "    - $(basename "$col" .bson)"
+    done < <(find "$dir" -maxdepth 1 -name '*.bson' 2>/dev/null | sort)
+    return 0
+  fi
+
+  return 1
+}
+
+# ============================================================
 # 5. RESTORE DATABASE
 # ============================================================
 restore_db() {
@@ -998,15 +1056,14 @@ restore_db() {
   [[ -z "$RST_PATH" ]] && { error "Path tidak boleh kosong."; pause; return; }
   [[ ! -e "$RST_PATH" ]] && { error "File/direktori '$RST_PATH' tidak ditemukan."; pause; return; }
 
-  read -rp "  Nama database tujuan (kosong = sesuai backup): " RST_DB
-
   local AUTH_ARGS=""
   [[ "$MONGO_AUTH" == "yes" && -n "$MONGO_ADMIN_USER" ]] && \
     AUTH_ARGS="-u $MONGO_ADMIN_USER -p $MONGO_ADMIN_PASS --authenticationDatabase admin"
 
+  local TMP_DIR=""
   local RST_DIR="$RST_PATH"
   if [[ "$RST_PATH" == *.tar.gz ]]; then
-    local TMP_DIR="/tmp/mongo_restore_$$"
+    TMP_DIR="/tmp/mongo_restore_$$"
     mkdir -p "$TMP_DIR"
     info "Mengekstrak backup..."
     tar -xzf "$RST_PATH" -C "$TMP_DIR"
@@ -1014,24 +1071,74 @@ restore_db() {
     [[ -z "$RST_DIR" ]] && RST_DIR="$TMP_DIR"
   fi
 
+  echo
+  if ! _inspect_backup_dir "$RST_DIR"; then
+    error "Tidak ditemukan data backup yang valid (tidak ada file .bson) di '$RST_DIR'."
+    [[ -n "$TMP_DIR" && -d "$TMP_DIR" ]] && rm -rf "$TMP_DIR"
+    pause; return
+  fi
+  echo
+
+  local SRC_DB="" SRC_PATH="$RST_DIR"
+  if [[ "$_FLAT_MODE" == "yes" ]]; then
+    SRC_DB=""
+    SRC_PATH="$RST_DIR"
+  elif [[ ${#_DB_DIRS[@]} -eq 1 ]]; then
+    SRC_DB="${_DB_DIRS[0]}"
+    SRC_PATH="$RST_DIR/$SRC_DB"
+  else
+    echo "  Ditemukan beberapa database dalam backup ini:"
+    local i=1 db_name
+    for db_name in "${_DB_DIRS[@]}"; do
+      echo "    $i) $db_name"
+      i=$((i+1))
+    done
+    echo "    0) Semua database"
+    read -rp "  Pilih database yang akan direstore (kosong = semua): " db_choice
+    if [[ -z "$db_choice" || "$db_choice" == "0" ]]; then
+      SRC_DB=""
+      SRC_PATH="$RST_DIR"
+    elif [[ "$db_choice" =~ ^[0-9]+$ ]] && (( db_choice >= 1 && db_choice <= ${#_DB_DIRS[@]} )); then
+      SRC_DB="${_DB_DIRS[$((db_choice - 1))]}"
+      SRC_PATH="$RST_DIR/$SRC_DB"
+    else
+      error "Pilihan tidak valid."
+      [[ -n "$TMP_DIR" && -d "$TMP_DIR" ]] && rm -rf "$TMP_DIR"
+      pause; return
+    fi
+  fi
+
+  read -rp "  Nama database tujuan (kosong = ${SRC_DB:-sesuai backup}): " RST_DB
+  [[ -z "$RST_DB" ]] && RST_DB="$SRC_DB"
+
   warn "PERINGATAN: Data yang ada pada database tujuan akan ditimpa!"
   read -rp "  Ketik 'RESTORE' untuk konfirmasi: " confirm
   if [[ "$confirm" != "RESTORE" ]]; then
     warn "Dibatalkan."
-    [[ -d "/tmp/mongo_restore_$$" ]] && rm -rf "/tmp/mongo_restore_$$"
+    [[ -n "$TMP_DIR" && -d "$TMP_DIR" ]] && rm -rf "$TMP_DIR"
     pause; return
   fi
 
+  local rc=0
   if [[ -n "$RST_DB" ]]; then
     run_with_spinner "Merestore ke database '$RST_DB'..." \
-      mongorestore --host "$MONGO_HOST" --port "$MONGO_PORT" $AUTH_ARGS --db "$RST_DB" --drop "$RST_DIR/$RST_DB"
+      mongorestore --host "$MONGO_HOST" --port "$MONGO_PORT" $AUTH_ARGS --db "$RST_DB" --drop "$SRC_PATH"
+    rc=$?
   else
     run_with_spinner "Merestore semua database..." \
-      mongorestore --host "$MONGO_HOST" --port "$MONGO_PORT" $AUTH_ARGS --drop "$RST_DIR"
+      mongorestore --host "$MONGO_HOST" --port "$MONGO_PORT" $AUTH_ARGS --drop "$SRC_PATH"
+    rc=$?
   fi
 
-  [[ -d "/tmp/mongo_restore_$$" ]] && rm -rf "/tmp/mongo_restore_$$"
-  echo; success "Restore selesai!"; pause
+  [[ -n "$TMP_DIR" && -d "$TMP_DIR" ]] && rm -rf "$TMP_DIR"
+
+  echo
+  if [[ $rc -eq 0 ]]; then
+    success "Restore selesai!"
+  else
+    error "Restore gagal (exit code $rc). Periksa pesan mongorestore di atas."
+  fi
+  pause
 }
 
 # ============================================================

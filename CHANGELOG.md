@@ -10,6 +10,13 @@ dan project ini memakai [Semantic Versioning](https://semver.org/lang/id/).
 ## [Unreleased]
 
 ### Fixed
+- **MongoDB Manager — Restore**: `restore_db()` salah membangun path source
+  `mongorestore` dari nama database **tujuan** yang diketik user, bukan nama
+  database **asli** di dalam backup — menyebabkan `mongorestore target ... invalid:
+  stat ...: no such file or directory` saat path backup langsung menunjuk direktori
+  dump flat (tanpa subfolder) atau saat merestore dengan nama database berbeda
+  (rename). Skrip juga tidak pernah mengecek exit code `mongorestore`, sehingga tetap
+  melaporkan "Restore selesai!" walau proses gagal total (0 dokumen ter-restore).
 - **Hosting/Nginx API proxy**: hilangkan trailing slash pada `proxy_pass`
   (`http://127.0.0.1:$API_PORT/` → `http://127.0.0.1:$API_PORT`) di config website
   agar path `/api/...` diteruskan utuh ke backend (trailing slash bikin routing salah).
@@ -26,6 +33,12 @@ dan project ini memakai [Semantic Versioning](https://semver.org/lang/id/).
   **dinonaktifkan otomatis** agar konfigurasi Nginx yang berjalan tetap valid.
 
 ### Added
+- **MongoDB Manager — Backup & Restore**: kini menampilkan preview isi data sebelum
+  eksekusi. Backup menampilkan daftar collection dari database yang dipilih (via
+  `listCollections`); restore mendeteksi struktur backup (`.tar.gz` atau direktori) dan
+  menampilkan database/collection yang ditemukan sebelum minta konfirmasi `RESTORE`.
+  Restore juga kini mendukung rename database (pilih database sumber, lalu nama
+  database tujuan terpisah) dan folder dump flat (satu database tanpa subfolder).
 - Modul **Nginx Extra** (`modules/nginx-extra.sh`), menu utama nomor 4:
   - **WSS Reverse Proxy** dua mode:
     - Menempel ke domain HTTPS yang **sudah ada** (mis. `wss://<domain>/ws`) dengan

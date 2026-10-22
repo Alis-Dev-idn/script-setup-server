@@ -65,7 +65,7 @@ log_info "Membuat symlink global..."
 ln -sf "$INSTALL_DIR/setup-server.sh" /usr/local/bin/setup-server 2>/dev/null
 chmod +x "$INSTALL_DIR/setup-server.sh"
 chmod +x "$INSTALL_DIR"/*.sh
-chmod +x "$INSTALL_DIR/modules/"*.sh
+chmod +x "$INSTALL_DIR/modules"/*/*.sh 2>/dev/null || true
 log_ok "Symlink dibuat: /usr/local/bin/setup-server"
 
 echo ""

@@ -8,3 +8,8 @@ Thumbs.db
 _*.py
 *.tmp
 *.log
+
+# Agent & Internal Docs (Do not track in git)
+.agent/
+AGENT.md
+docs/

@@ -32,9 +32,9 @@ setup-server
 script-setup-server/
 |-- setup-server.sh              # Entry point utama (Panel Terpadu)
 |-- install.sh                   # Online installer (curl-able)
-|-- setup-hosting.sh             # Shim -> modules/hosting.sh
-|-- mongodb-manager.sh           # Shim -> modules/mongodb.sh
-|-- nodejs-pm2-manager.sh        # Shim -> modules/nodejs-pm2.sh
+|-- setup-hosting.sh             # Shim -> modules/hosting/main.sh
+|-- mongodb-manager.sh           # Shim -> modules/mongodb/main.sh
+|-- nodejs-pm2-manager.sh        # Shim -> modules/nodejs-pm2/main.sh
 |
 |-- lib/
 |   |-- common.sh                # Warna, logging, helper umum, spinner
@@ -61,10 +61,10 @@ Ringkasan modul tingkat atas:
 
 ```
 setup-server  (Panel Terpadu)
-|-- 1. Hosting Panel    -> modules/hosting.sh     (vsftpd + Nginx + SSL + Deploy User)
-|-- 2. MongoDB Manager  -> modules/mongodb.sh     (setup, user, DB, backup, service, TLS)
-|-- 3. Node.js & PM2    -> modules/nodejs-pm2.sh  (install/update, manage app, startup)
-|-- 4. Nginx Extra      -> modules/nginx-extra.sh (WSS + MQTT TLS + auto-renew)
+|-- 1. Hosting Panel    -> modules/hosting/main.sh     (vsftpd + Nginx + SSL + Deploy User)
+|-- 2. MongoDB Manager  -> modules/mongodb/main.sh     (setup, user, DB, backup, service, TLS)
+|-- 3. Node.js & PM2    -> modules/nodejs-pm2/main.sh  (install/update, manage app, startup)
+|-- 4. Nginx Extra      -> modules/nginx-extra/main.sh (WSS + MQTT TLS + auto-renew)
 +-- 5. Keluar
 ```
 

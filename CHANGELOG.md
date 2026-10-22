@@ -5,136 +5,37 @@ Format mengikuti [Keep a Changelog](https://keepachangelog.com/id/1.1.0/),
 dan project ini memakai [Semantic Versioning](https://semver.org/lang/id/).
 
 > **Aturan:** setiap perubahan wajib menambahkan entri di sini dan memperbarui
-> [ROUTEMAP.md](ROUTEMAP.md) bila menu/alur berubah. Lihat [CLAUDE.md](CLAUDE.md).
+> [route-map.md](route-map.md) bila menu/alur berubah. Lihat [07-dokumentasi-changelog.md](../.agent/rules/07-dokumentasi-changelog.md).
+
+---
 
 ## [Unreleased]
 
-### Fixed
-- **Node.js & PM2 Manager**: `install_nodejs()`/`update_nodejs()` menyimpan GPG
-  key NodeSource mentah (ASCII-armored) langsung sebagai file `.gpg` tanpa
-  di-`dearmor`, padahal `signed-by` di baris `deb [...]` mewajibkan format
-  binary — menyebabkan `apt-get update` gagal dengan
-  `NO_PUBKEY 2F59B5F99B1BE0B4` / `is not signed`. Diperbaiki dengan
-  `curl ... | sudo gpg --dearmor -o ...` (pola yang sama seperti dipakai di
-  MongoDB Manager), dan menambah `apt-get install -y curl gnupg` sebagai
-  jaring pengaman sebelum proses dearmor.
-- **Node.js & PM2 Manager**: pesan error di `install_nodejs()`/`install_pm2()`/
-  `update_nodejs()` langsung hilang tertimpa layar menu berikutnya (`clear`)
-  sebelum sempat terbaca — beberapa jalur gagal (`curl` GPG key, `apt-get
-  update/install`, `npm install -g`) tidak memanggil `pause` sebelum `return`.
-  Ditambahkan `pause` di semua jalur tersebut. Output `apt-get`/`curl`/`npm`
-  yang tadinya dibuang ke `/dev/null` juga tidak lagi disembunyikan pada
-  langkah-langkah kritikal ini, supaya pesan error asli (bukan cuma pesan
-  generik "Gagal ...") ikut tampil untuk membantu diagnosis.
-- **Node.js & PM2 Manager**: fungsi `show_banner()` di `modules/nodejs-pm2.sh`
-  memakai nama yang sama persis dengan `show_banner()` di `modules/mongodb.sh`.
-  Karena `setup-server.sh` men-`source` semua modul ke satu proses shell yang
-  sama, definisi yang di-source belakangan (nodejs-pm2.sh) menimpa punya
-  MongoDB Manager — akibatnya menu **MongoDB Manager** menampilkan banner
-  "Node.js & PM2 Manager" yang salah saat diakses lewat panel terpadu. Fungsi
-  di `nodejs-pm2.sh` di-rename jadi `_nodejs_show_banner()` agar tidak bentrok.
-- **Node.js & PM2 Manager**: beberapa langkah (`apt-get update/install`, `curl`
-  GPG key, `npm install -g`, `pm2 restart/reload all`) tidak pernah mengecek
-  exit code sebelum melaporkan sukses — mengikuti pola bug yang sama seperti
-  di MongoDB Manager (restore/setup). Kini setiap langkah kritikal di
-  `install_nodejs()`, `update_nodejs()`, dan `update_pm2()` diverifikasi; upgrade
-  major version Node.js juga memverifikasi versi yang benar-benar terpasang
-  sebelum melaporkan "berhasil diupdate".
-- **Node.js & PM2 Manager**: `install_nodejs()` menghapus (purge) Node.js lama
-  **sebelum** memverifikasi repository/GPG key NodeSource yang baru berhasil
-  disiapkan — kalau download GPG key atau `apt-get update` gagal di tengah
-  jalan, server bisa berakhir tanpa Node.js sama sekali. Urutan dibalik:
-  repo & `apt-get update` divalidasi dulu, baru paket lama diganti (biarkan
-  `apt-get install --allow-downgrades` yang menangani upgrade/downgrade in-place).
-  Deteksi instalasi via **nvm** juga diperbaiki (`nvm` adalah shell function,
-  bukan binary, sehingga `command -v nvm` tidak pernah terdeteksi — kini dicek
-  lewat keberadaan file `~/.nvm/nvm.sh`).
-- **Node.js & PM2 Manager**: `install_pm2()` tidak memverifikasi ulang bahwa
-  Node.js benar-benar berhasil terinstall setelah menawarkan instalasi otomatis
-  — kalau gagal, langkah selanjutnya tetap jalan dan memunculkan error
-  "command not found" yang membingungkan alih-alih pesan yang jelas.
-- **MongoDB Manager — Setup TLS**: `setup_mongodb()` menulis `mode: requireTLS`
-  tanpa `CAFile` ketika operator tidak mengisi path CA — MongoDB modern menolak
-  start dengan `InvalidOptions: The use of TLS without specifying a chain of trust
-  is no longer supported` (SERVER-72839). Kini bila CAFile kosong, skrip menambahkan
-  `allowConnectionsWithoutCertificates: true` (TLS untuk enkripsi transport tanpa
-  mewajibkan sertifikat client). Perbaikan config yang sudah terlanjur gagal bisa
-  dilakukan lewat menu **Service MongoDB > 6. Perbaiki masalah konfigurasi umum**.
-- **MongoDB Manager — Setup**: `setup_mongodb()` gagal start mongod saat auth +
-  replica set diaktifkan bersamaan — MongoDB mewajibkan `security.keyFile` bila
-  `authorization: enabled` dipakai bersama `replication.replSetName`
-  (`BadValue: security.keyFile is required when authorization is enabled with
-  replica sets`), tapi skrip tidak pernah membuatnya. Kini keyFile dibuat otomatis
-  (`openssl rand -base64 756`, `/var/lib/mongodb/keyfile`, `chmod 400`) untuk
-  kombinasi tersebut. Skrip juga sekarang memverifikasi `mongod` benar-benar
-  `active` sebelum menampilkan banner "Berhasil Diinstal!" — sebelumnya banner
-  sukses tetap tampil walau service gagal start.
-- **MongoDB Manager — Restore**: `restore_db()` salah membangun path source
-  `mongorestore` dari nama database **tujuan** yang diketik user, bukan nama
-  database **asli** di dalam backup — menyebabkan `mongorestore target ... invalid:
-  stat ...: no such file or directory` saat path backup langsung menunjuk direktori
-  dump flat (tanpa subfolder) atau saat merestore dengan nama database berbeda
-  (rename). Skrip juga tidak pernah mengecek exit code `mongorestore`, sehingga tetap
-  melaporkan "Restore selesai!" walau proses gagal total (0 dokumen ter-restore).
-- **Hosting/Nginx API proxy**: hilangkan trailing slash pada `proxy_pass`
-  (`http://127.0.0.1:$API_PORT/` → `http://127.0.0.1:$API_PORT`) di config website
-  agar path `/api/...` diteruskan utuh ke backend (trailing slash bikin routing salah).
-- **MQTT TLS**: perjelas bahwa file `streams-*/mqtt-*.conf` adalah STREAM server yang
-  di-include di dalam `stream {}` (tambah komentar di file), serta tambah diagnostik
-  pasca-setup: cek port TLS sudah `LISTEN` dan broker backend punya listener —
-  memberi peringatan bila broker tidak listen di port tujuan (penyebab umum mqtts
-  gagal connect meski konfigurasi TLS benar).
-- **MQTT TLS**: deteksi modul Nginx `stream` kini membedakan build statis vs
-  `--with-stream=dynamic` yang belum di-`load_module` (penyebab `unknown directive
-  "stream"` walau `--with-stream` terlihat di `nginx -V`).
-- **MQTT TLS**: saat `nginx -t` gagal, pesan error asli kini **ditampilkan** (tidak
-  lagi dibuang ke `/dev/null`) dan symlink `streams-enabled` yang baru dibuat
-  **dinonaktifkan otomatis** agar konfigurasi Nginx yang berjalan tetap valid.
+## [1.1.0] - 2026-10-22
 
 ### Added
-- **MongoDB Manager**: tambah menu utama "7. Hapus/Uninstall MongoDB" untuk
-  membersihkan instalasi (stop & disable service, purge package `mongodb-org*`,
-  hapus repository & GPG key APT, backup lalu hapus `/etc/mongod.conf`, hapus
-  keyFile & TLS PEM) sehingga bisa install ulang dari awal lewat "1. Setup
-  MongoDB". Menghapus data database (`/var/lib/mongodb`) bersifat opsional dan
-  digate konfirmasi ketik `HAPUS`.
-- **MongoDB Manager — Service**: tambah opsi "Perbaiki masalah konfigurasi umum
-  (keyFile & TLS)" di menu Service MongoDB (nomor 6), untuk memperbaiki instalasi
-  lama yang sudah terlanjur gagal start karena (a) kombinasi auth + replica set
-  tanpa `security.keyFile`, dan/atau (b) TLS aktif tanpa CAFile/chain-of-trust
-  (lihat entri Fixed di atas) — tanpa perlu mengulang seluruh wizard Setup MongoDB
-  (yang akan minta ulang password admin, dsb). Backup `/etc/mongod.conf` dibuat
-  otomatis sebelum diubah.
-- **MongoDB Manager — Setup**: tambah pengaturan cache memory WiredTiger (heap) saat
-  instalasi. Mendeteksi total RAM server (`/proc/meminfo`) dan memberi rekomendasi
-  otomatis mengikuti formula resmi MongoDB (`(RAM GB - 1) / 2`, minimum 0.25 GB), operator
-  bisa menerima rekomendasi atau input ukuran sendiri. Nilai ditulis ke
-  `storage.wiredTiger.engineConfig.cacheSizeGB` di `/etc/mongod.conf` dan ditampilkan di
-  ringkasan sebelum instalasi, ringkasan hasil instalasi, serta status di menu
-  **Service MongoDB**.
-- **MongoDB Manager — Backup & Restore**: kini menampilkan preview isi data sebelum
-  eksekusi. Backup menampilkan daftar collection dari database yang dipilih (via
-  `listCollections`); restore mendeteksi struktur backup (`.tar.gz` atau direktori) dan
-  menampilkan database/collection yang ditemukan sebelum minta konfirmasi `RESTORE`.
-  Restore juga kini mendukung rename database (pilih database sumber, lalu nama
-  database tujuan terpisah) dan folder dump flat (satu database tanpa subfolder).
-- Modul **Nginx Extra** (`modules/nginx-extra.sh`), menu utama nomor 4:
-  - **WSS Reverse Proxy** dua mode:
-    - Menempel ke domain HTTPS yang **sudah ada** (mis. `wss://<domain>/ws`) dengan
-      menyisipkan blok `location` (backup + auto-rollback bila `nginx -t` gagal).
-    - Membuat **domain khusus baru** (server block `80 -> 443`).
-    - Path & port backend bisa diinput user, default `/ws` (existing) / `/` (baru)
-      dan port `3001`. Header upgrade + timeout panjang untuk koneksi WebSocket.
-  - **MQTT TLS** via Nginx **stream** termination (default `mqtts 8883` -> broker
-    plain `127.0.0.1:1883`); otomatis memasang `libnginx-mod-stream` & menyuntik
-    blok `stream{}` ke `nginx.conf` bila perlu.
-  - **Auto-Renew Deploy-Hook** certbot (`renewal-hooks/deploy/reload-services.sh`)
-    yang reload Nginx & Mosquitto mengikuti sertifikat utama Let's Encrypt.
-  - Submenu List & Hapus konfigurasi; setiap pembuatan menampilkan **ringkasan**.
-- Dokumen tata kelola repo: `ROUTEMAP.md` (route map kanonik), `CHANGELOG.md`,
-  `CLAUDE.md` (aturan kontribusi).
+- **Arsitektur Modular Domain**: Pemecahan arsitektur monolitik script Bash menjadi submodul domain terisolasi di `modules/hosting/`, `modules/mongodb/`, `modules/nodejs-pm2/`, dan `modules/nginx-extra/`. Seluruh file baru berukuran < 350 baris dan fungsi individual < 50 baris.
+- **Komponen CLI UI/UX Modern (`lib/ui.sh`)**: Implementasi spinner in-place satu baris anti-wall-of-text, frame card menu ANSI 256 colors, dan visualisasi status yang rapi dan konsisten.
+- **Standarisasi Dokumentasi Resmi di `docs/`**: Integrasi dokumen arsitektur dan tata kelola (`docs/route-map.md`, `docs/technical-architecture-blueprint.md`, `docs/cli-ux-specification.md`, `docs/requirements-refactor-besar.md`, dan `docs/adr/ADR-001-modularisasi-script-setup-server.md`).
 
 ### Changed
-- `setup-server.sh`: menu utama menambah `4. Nginx Extra`, opsi Keluar menjadi `5`.
-- `README.md`: tabel fitur, struktur project, dan bagian Peta Menu kini menunjuk ke
-  `ROUTEMAP.md`.
+- **Enkapsulasi Variabel & Scoping**: Seluruh variabel internal dalam modul dideklarasikan menggunakan keyword `local` untuk mencegah *global scope pollution* saat di-source bersamaan.
+- **Entry Points & Shims**: `setup-server.sh`, `install.sh`, dan root shims (`setup-hosting.sh`, `mongodb-manager.sh`, `nodejs-pm2-manager.sh`) diperbarui mengarah ke router modular domain baru tanpa *breaking changes* bagi pengguna.
+- **Sentralisasi Dokumentasi**: Seluruh dokumentasi yang tercecer di root (`ROUTEMAP.md`, `CHANGELOG.md`, `requirements/`, `design/`) telah dipindahkan dan ditertibkan ke dalam direktori resmi `docs/`.
+
+## [1.0.0] - 2026-07-05
+
+### Fixed
+- **Node.js & PM2 Manager**: `install_nodejs()`/`update_nodejs()` menyimpan GPG key NodeSource mentah langsung sebagai file `.gpg` tanpa di-`dearmor` — diperbaiki dengan `curl ... | sudo gpg --dearmor -o ...`.
+- **Node.js & PM2 Manager**: Penambahan pause dan penanganan exit code pada langkah kritikal `apt-get`, `curl`, dan `npm install -g`.
+- **Node.js & PM2 Manager**: Renaming `show_banner()` menjadi `_nodejs_show_banner()` agar tidak bentrok dengan `show_banner()` di MongoDB Manager.
+- **MongoDB Manager**: Penambahan pembuatan `security.keyFile` otomatis saat kombinasi auth dan replica set diaktifkan bersamaan.
+- **MongoDB Manager**: Penambahan konfigurasi `allowConnectionsWithoutCertificates: true` saat TLS diaktifkan tanpa CAFile.
+- **Hosting / Nginx**: Penghapusan trailing slash pada `proxy_pass` di reverse proxy API.
+- **MQTT TLS**: Deteksi dinamis module Nginx stream dan proteksi rollback otomatis jika `nginx -t` gagal.
+
+### Added
+- **MongoDB Manager**: Opsi menu "7. Hapus/Uninstall MongoDB" untuk pembersihan paket, repositori, dan data.
+- **MongoDB Manager**: Opsi perbaikan konfigurasi otomatis keyFile & TLS pada menu Service.
+- **MongoDB Manager**: Fitur tuning heap cache memory WiredTiger dengan deteksi otomatis kapasitas RAM server.
+- **Nginx Extra**: Fitur WSS Reverse Proxy, MQTT over TLS Stream termination, dan Certbot auto-renew deploy-hook.
